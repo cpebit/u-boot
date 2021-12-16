@@ -8,7 +8,7 @@
 #ifndef _BOOTM_H
 #define _BOOTM_H
 
-#include <command.h>
+#include "command.h"
 #include <image.h>
 
 #define BOOTM_ERR_RESET		(-1)
