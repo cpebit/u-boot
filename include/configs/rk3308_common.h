@@ -9,6 +9,17 @@
 
 #include "rockchip-common.h"
 
+#define CONFIG_RESET_TO_RETRY
+#define CONFIG_BOOT_RETRY_TIME 5
+
+#define CONFIG_BOOTCOUNT_LIMIT
+#define CONFIG_BOOTCOUNT_ENV
+
+#define CONFIG_SYS_MMC_ENV_DEV 1
+#define CONFIG_ENV_OFFSET 0x3f0000
+#define CONFIG_ENV_OFFSET_REDUND 0x3f8000
+#define CONFIG_ENV_SIZE 0x8000
+
 #define CONFIG_SYS_MALLOC_LEN		(10 << 20)
 #define CONFIG_SYS_CBSIZE		1024
 #define CONFIG_SKIP_LOWLEVEL_INIT
@@ -40,8 +51,6 @@
 #define SDRAM_BANK_SIZE			(2UL << 30)
 #ifdef CONFIG_DM_DVFS
 #define CONFIG_PREBOOT			"dvfs repeat"
-#else
-#define CONFIG_PREBOOT
 #endif
 
 #ifndef CONFIG_SPL_BUILD
@@ -71,16 +80,39 @@
 	"ramdisk_addr_r=0x03080000\0"
 #endif
 
-#include <config_distro_bootcmd.h>
 #define CONFIG_EXTRA_ENV_SETTINGS \
 	ENV_MEM_LAYOUT_SETTINGS \
-	"fdtfile=" FDTFILE \
-	"partitions=" PARTS_DEFAULT \
 	ROCKCHIP_DEVICE_SETTINGS \
-	RKIMG_DET_BOOTDEV \
-	BOOTENV_SHARED_RKNAND \
-	BOOTENV
-
+    "env_saved=0\0" \
+    "devtype=mmc\0" \
+    "devnum=1\0" \
+    "bootpart=1\0" \
+    "prefix=/boot/\0" \
+    "bootlimit=5\0" \
+    "upgrade_available=0\0" \
+    "bootcount=0\0" \
+    "altbootcmd=" \
+    "if test ${bootpart} -eq 1; " \
+    "then " \
+    "setenv bootpart 2; " \
+    "else " \
+    "setenv bootpart 1; " \
+    "fi; " \
+    "setenv upgrade_available 0; " \
+    "setenv bootcount 0; " \
+    "saveenv; " \
+    "run bootcmd;\0"
 #endif
 
+#undef CONFIG_BOOTCOMMAND
+#define CONFIG_BOOTCOMMAND \
+    "if test ${env_saved} -eq 0; " \
+    "then " \
+    "echo Environment not saved yet, saving...; " \
+    "setenv env_saved 1; " \
+    "saveenv; " \
+    "fi; " \
+    "echo Booting from ${devtype} ${devnum}:${bootpart}; " \
+    "load ${devtype} ${devnum}:${bootpart} ${scriptaddr} ${prefix}boot.scr; " \
+	"source ${scriptaddr}"
 #endif
