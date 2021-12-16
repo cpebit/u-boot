@@ -606,6 +606,7 @@ endif
 
 KBUILD_CFLAGS += $(call cc-option,-Wno-format-nonliteral)
 KBUILD_CFLAGS += $(call cc-disable-warning, address-of-packed-member)
+KBUILD_CFLAGS += $(call cc-disable-warning, maybe-uninitialized)
 
 # turn jbsr into jsr for m68k
 ifeq ($(ARCH),m68k)
