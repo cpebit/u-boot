@@ -9,13 +9,54 @@
 
 #include <configs/rv1126_common.h>
 
+#define CONFIG_RESET_TO_RETRY
+#define CONFIG_BOOT_RETRY_TIME 5
+
+#define CONFIG_BOOTCOUNT_LIMIT
+#define CONFIG_BOOTCOUNT_ENV
+
 #define CONFIG_SUPPORT_EMMC_RPMB
 
 #define CONFIG_SYS_MMC_ENV_DEV 0
+#define CONFIG_ENV_OFFSET 0x3f0000
+#define CONFIG_ENV_OFFSET_REDUND 0x3f8000
+#define CONFIG_ENV_SIZE 0x8000
+
+#define ENV_MEM_LAYOUT_SETTINGS \
+	"scriptaddr=0x00000000\0" \
+	"pxefile_addr_r=0x00100000\0" \
+	"fdt_addr_r=0x08300000\0" \
+	"kernel_addr_r=0x02008000\0" \
+	"ramdisk_addr_r=0x0a200000\0"
 
 #define ROCKCHIP_DEVICE_SETTINGS \
-			"stdout=serial,vidconsole\0" \
-			"stderr=serial,vidconsole\0"
+    "stdout=serial,vidconsole\0" \
+    "stderr=serial,vidconsole\0"
+
+#undef CONFIG_EXTRA_ENV_SETTINGS
+#define CONFIG_EXTRA_ENV_SETTINGS \
+    ENV_MEM_LAYOUT_SETTINGS \
+    ROCKCHIP_DEVICE_SETTINGS \
+    "env_saved=0\0" \
+    "devtype=mmc\0" \
+    "devnum=1\0" \
+    "bootpart=1\0" \
+    "prefix=/boot/\0" \
+    "bootlimit=5\0" \
+    "upgrade_available=0\0" \
+    "bootcount=0\0" \
+    "altbootcmd=" \
+    "if test ${bootpart} -eq 1; " \
+    "then " \
+    "setenv bootpart 2; " \
+    "else " \
+    "setenv bootpart 1; " \
+    "fi; " \
+    "setenv upgrade_available 0; " \
+    "setenv bootcount 0; " \
+    "saveenv; " \
+    "run bootcmd;\0"
+
 #undef CONFIG_CONSOLE_SCROLL_LINES
 #define CONFIG_CONSOLE_SCROLL_LINES            10
 
@@ -35,7 +76,16 @@
 #ifdef CONFIG_SPL_KERNEL_BOOT
 #define CONFIG_BOOTCOMMAND "reset"
 #else
-#define CONFIG_BOOTCOMMAND RKIMG_BOOTCOMMAND
+#define CONFIG_BOOTCOMMAND \
+    "if test ${env_saved} -eq 0; " \
+    "then " \
+    "echo Environment not saved yet, saving...; " \
+    "setenv env_saved 1; " \
+    "saveenv; " \
+    "fi; " \
+    "echo Booting from ${devtype} ${devnum}:${bootpart}; " \
+    "load ${devtype} ${devnum}:${bootpart} ${scriptaddr} ${prefix}boot.scr; " \
+	"source ${scriptaddr}"
 #endif
 
 #define CONFIG_SET_DFU_ALT_INFO
