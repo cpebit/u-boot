@@ -46,6 +46,7 @@
 #include <asm/arch/resource_img.h>
 #include <asm/arch/rk_atags.h>
 #include <asm/arch/vendor.h>
+#include <u-boot/sha256.h>
 #ifdef CONFIG_ROCKCHIP_EINK_DISPLAY
 #include <rk_eink.h>
 #endif
@@ -131,6 +132,35 @@ static int rockchip_set_ethaddr(void)
 			printf("%s: vendor_storage_write failed %d\n",
 			       __func__, ret);
 	}
+#else
+	int ret;
+	const char *cpuid = env_get("cpuid#");
+	u8 hash[SHA256_SUM_LEN];
+	int size = sizeof(hash);
+	u8 mac_addr[6];
+
+	/* Only generate a MAC address, if none is set in the environment */
+	if (env_get("ethaddr"))
+		return 0;
+
+	if (!cpuid) {
+		debug("%s: could not retrieve 'cpuid#'\n", __func__);
+		return -1;
+	}
+
+	ret = hash_block("sha256", (void *)cpuid, strlen(cpuid), hash, &size);
+	if (ret) {
+		debug("%s: failed to calculate SHA256\n", __func__);
+		return -1;
+	}
+
+	/* Copy 6 bytes of the hash to base the MAC address on */
+	memcpy(mac_addr, hash, 6);
+
+	/* Make this a valid MAC address and set it */
+	mac_addr[0] &= 0xfe;  /* clear multicast bit */
+	mac_addr[0] |= 0x02;  /* set local assignment bit (IEEE802) */
+	eth_env_set_enetaddr("ethaddr", mac_addr);
 #endif
 
 	return 0;
@@ -140,9 +170,10 @@ static int rockchip_set_serialno(void)
 {
 	u8 low[CPUID_LEN / 2], high[CPUID_LEN / 2];
 	u8 cpuid[CPUID_LEN] = {0};
+	char cpuid_str[CPUID_LEN * 2 + 1];
+	u64 serialno;
 	char serialno_str[VENDOR_SN_MAX];
 	int ret = 0, i;
-	u64 serialno;
 
 	/* Read serial number from vendor storage part */
 	memset(serialno_str, 0, VENDOR_SN_MAX);
@@ -192,6 +223,10 @@ static int rockchip_set_serialno(void)
 		for (i = 0; i < CPUID_LEN; i++)
 			cpuid[i] = (u8)(rand());
 #endif
+		memset(cpuid_str, 0, sizeof(cpuid_str));
+		for (i = 0; i < 16; i++)
+			sprintf(&cpuid_str[i * 2], "%02x", cpuid[i]);
+
 		/* Generate the serial number based on CPU ID */
 		for (i = 0; i < 8; i++) {
 			low[i] = cpuid[1 + (i << 1)];
@@ -200,9 +235,11 @@ static int rockchip_set_serialno(void)
 
 		serialno = crc32_no_comp(0, low, 8);
 		serialno |= (u64)crc32_no_comp(serialno, high, 8) << 32;
-		snprintf(serialno_str, sizeof(serialno_str), "%llx", serialno);
+		snprintf(serialno_str, sizeof(serialno_str), "%016llx", serialno);
 
+		env_set("cpuid#", cpuid_str);
 		env_set("serial#", serialno_str);
+
 #ifdef CONFIG_ROCKCHIP_VENDOR_PARTITION
 	}
 #endif
@@ -335,8 +372,8 @@ static void cmdline_handle(void)
 
 int board_late_init(void)
 {
-	rockchip_set_ethaddr();
 	rockchip_set_serialno();
+	rockchip_set_ethaddr();
 	setup_download_mode();
 #if (CONFIG_ROCKCHIP_BOOT_MODE_REG > 0)
 	setup_boot_mode();
