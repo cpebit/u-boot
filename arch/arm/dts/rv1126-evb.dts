@@ -39,6 +39,7 @@
 		compatible = "gpio-keys";
 		#address-cells = <1>;
 		#size-cells = <0>;
+		u-boot,dm-spl;
 
 		button@0 {
 			gpio-key,wakeup = <1>;
@@ -47,6 +48,7 @@
 			linux,code = <KEY_F15>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pwrbtn>;
+			u-boot,dm-spl;
 		};
 	};
 };
