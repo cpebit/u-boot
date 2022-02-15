@@ -40,6 +40,7 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 		u-boot,dm-spl;
+		status = "okay";
 
 		button@0 {
 			gpio-key,wakeup = <1>;
@@ -49,8 +50,67 @@
 			pinctrl-names = "default";
 			pinctrl-0 = <&pwrbtn>;
 			u-boot,dm-spl;
+			status = "okay";
 		};
 	};
+
+	vdd_arm: vdd-arm {
+		compatible = "pwm-regulator";
+		pwms = <&pwm0 0 5000 1>;
+		regulator-name = "vdd_arm";
+		regulator-min-microvolt = <650000>;
+		regulator-max-microvolt = <950000>;
+		regulator-init-microvolt = <800000>;
+		regulator-always-on;
+		regulator-boot-on;
+		u-boot,dm-spl;
+		status = "okay";
+	};
+
+	vdd_npu: vdd-npu {
+		compatible = "pwm-regulator";
+		pwms = <&pwm1 0 5000 1>;
+		regulator-name = "vdd_npu";
+		regulator-min-microvolt = <650000>;
+		regulator-max-microvolt = <950000>;
+		regulator-init-microvolt = <800000>;
+		regulator-always-on;
+		regulator-boot-on;
+		u-boot,dm-spl;
+		status = "okay";
+	};
+
+	vdd_vepu: vdd-vepu {
+		compatible = "pwm-regulator";
+		pwms = <&pwm1 0 5000 1>;
+		regulator-name = "vdd_vepu";
+		regulator-min-microvolt = <650000>;
+		regulator-max-microvolt = <950000>;
+		regulator-init-microvolt = <800000>;
+		regulator-always-on;
+		regulator-boot-on;
+		u-boot,dm-spl;
+		status = "okay";
+	};
+};
+
+&cpu0 {
+	cpu-supply = <&vdd_arm>;
+	u-boot,dm-spl;
+};
+
+&pwm0 {
+	status = "okay";
+	pinctrl-names = "active";
+	pinctrl-0 = <&pwm0m0_pins_pull_down>;
+	u-boot,dm-spl;
+};
+
+&pwm1 {
+	status = "okay";
+	pinctrl-names = "active";
+	pinctrl-0 = <&pwm1m0_pins_pull_down>;
+	u-boot,dm-spl;
 };
 
 &uart2 {
