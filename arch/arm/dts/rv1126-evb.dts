@@ -9,7 +9,7 @@
 #include <dt-bindings/input/input.h>
 
 / {
-	model = "Rockchip RV1126 Evaluation Board";
+	model = "Radxa CS317 Board";
 	compatible = "rockchip,rv1126-evb", "rockchip,rv1126";
 
 	adc-keys {
