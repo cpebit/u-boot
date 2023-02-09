@@ -249,11 +249,7 @@ __weak int rockchip_dnl_key_pressed(void)
 {
 #if defined(CONFIG_DM_KEY)
 #ifdef CONFIG_CMD_ROCKUSB
-	if(key_is_pressed(key_read(KEY_VOLUMEUP))){
-		return key_is_pressed(key_read(KEY_VOLUMEUP));
-	}else if(key_is_pressed(key_read(KEY_F15))){
-		return key_is_pressed(key_read(KEY_F15));
-	}
+	return key_is_pressed(key_read(KEY_VOLUMEUP));
 #else
 	return key_is_pressed(key_read(KEY_MENU));
 #endif
