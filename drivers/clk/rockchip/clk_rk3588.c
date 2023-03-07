@@ -293,7 +293,7 @@ static ulong rk3588_top_get_clk(struct rk3588_clk_priv *priv, ulong clk_id)
 		if (sel == ACLK_TOP_ROOT_SRC_SEL_CPLL)
 			prate = priv->cpll_hz;
 		else
-			prate = priv->gpll_hz;
+			prate = priv->cpll_hz;
 		return DIV_TO_RATE(prate, div);
 	case ACLK_LOW_TOP_ROOT:
 		con = readl(&cru->clksel_con[8]);
@@ -1090,8 +1090,10 @@ static ulong rk3588_dclk_vop_get_clk(struct rk3588_clk_priv *priv, ulong clk_id)
 					       priv->cru, V0PLL);
 	else if (sel == DCLK_VOP_SRC_SEL_GPLL)
 		parent = priv->gpll_hz;
-	else
+	else if (sel == DCLK_VOP_SRC_SEL_CPLL)
 		parent = priv->cpll_hz;
+	else
+		return -ENOENT;
 
 	return DIV_TO_RATE(parent, div);
 }
@@ -1806,7 +1808,7 @@ int rk3588_mmc_get_phase(struct clk *clk)
 	ulong rate;
 
 	rate = rk3588_clk_get_rate(clk);
-	if (rate <= 0)
+	if (rate < 0)
 		return rate;
 
 	if (clk->id == SCLK_SDMMC_SAMPLE)
@@ -1839,7 +1841,7 @@ int rk3588_mmc_set_phase(struct clk *clk, u32 degrees)
 	ulong rate;
 
 	rate = rk3588_clk_get_rate(clk);
-	if (rate <= 0)
+	if (rate < 0)
 		return rate;
 
 	nineties = degrees / 90;
@@ -2482,7 +2484,6 @@ int soc_clk_dump(void)
 	for (i = 0; i < clk_count; i++) {
 		clk_dump = &clks_dump[i];
 		if (clk_dump->name) {
-			memset(&clk, 0, sizeof(struct clk));
 			clk.id = clk_dump->id;
 			if (clk_dump->is_cru)
 				ret = clk_request(cru_dev, &clk);
@@ -2491,12 +2492,21 @@ int soc_clk_dump(void)
 
 			rate = clk_get_rate(&clk);
 			clk_free(&clk);
-			if (rate < 0)
-				printf("  %s %s\n", clk_dump->name,
-				       "unknown");
-			else
-				printf("  %s %lu KHz\n", clk_dump->name,
-				       rate / 1000);
+			if (i == 0) {
+				if (rate < 0)
+					printf("  %s %s\n", clk_dump->name,
+					       "unknown");
+				else
+					printf("  %s %lu KHz\n", clk_dump->name,
+					       rate / 1000);
+			} else {
+				if (rate < 0)
+					printf("  %s %s\n", clk_dump->name,
+					       "unknown");
+				else
+					printf("  %s %lu KHz\n", clk_dump->name,
+					       rate / 1000);
+			}
 		}
 	}
 

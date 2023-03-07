@@ -519,7 +519,6 @@ int nand_spl_load_image(u32 offs, u32 size, void *buf)
 {
 	int i;
 	unsigned int page;
-	int force_bad_block_check = 1;
 	unsigned int maxpages = CONFIG_SYS_NAND_SIZE /
 				nand_page_size;
 
@@ -533,7 +532,7 @@ int nand_spl_load_image(u32 offs, u32 size, void *buf)
 		 * Check if we have crossed a block boundary, and if so
 		 * check for bad block.
 		 */
-		if (force_bad_block_check || !(page % nand_page_num)) {
+		if (!(page % nand_page_num)) {
 			/*
 			 * Yes, new block. See if this block is good. If not,
 			 * loop until we find a good block.
@@ -545,8 +544,6 @@ int nand_spl_load_image(u32 offs, u32 size, void *buf)
 					return -EIO;
 			}
 		}
-
-		force_bad_block_check = 0;
 
 		if (nandc_read_page(page, buf) < 0)
 			return -EIO;

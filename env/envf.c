@@ -40,7 +40,6 @@ static u32 envf_num;
 static const char *envf_list[ENVF_MAX];
 #endif
 
-#ifdef CONFIG_DM_MMC
 static int pmbr_part_valid(struct partition *part)
 {
 	if (part->sys_ind == EFI_PMBR_OSTYPE_EFI_GPT &&
@@ -78,7 +77,6 @@ static int can_find_pmbr(struct blk_desc *dev_desc)
 
 	return 0;
 }
-#endif
 
 static const char *env_get_string(env_t *env, u32 size, const char *str)
 {

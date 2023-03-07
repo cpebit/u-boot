@@ -529,9 +529,8 @@ static int rk3588_set_rgmii_speed(struct gmac_rockchip_platdata *pdata,
 		RK3588_GMAC_CLK_RGMII_DIV1 = 0,
 		RK3588_GMAC_CLK_RGMII_DIV5 = GENMASK(3, 2),
 		RK3588_GMAC_CLK_RGMII_DIV50 = BIT(3),
-		RK3588_GMAC_CLK_RMII_DIV2 = BIT(2),
+		RK3588_GMA_CLK_RMII_DIV2 = BIT(2),
 		RK3588_GMAC_CLK_RMII_DIV20 = 0,
-		RK3588_GMAC1_ID_SHIFT = 5,
 	};
 
 	php_grf = syscon_get_first_range(ROCKCHIP_SYSCON_PHP_GRF);
@@ -545,7 +544,7 @@ static int rk3588_set_rgmii_speed(struct gmac_rockchip_platdata *pdata,
 		break;
 	case 100:
 		if (pdata->phy_interface == PHY_INTERFACE_MODE_RMII)
-			div = RK3588_GMAC_CLK_RMII_DIV2;
+			div = RK3588_GMA_CLK_RMII_DIV2;
 		else
 			div = RK3588_GMAC_CLK_RGMII_DIV5;
 		break;
@@ -564,10 +563,6 @@ static int rk3588_set_rgmii_speed(struct gmac_rockchip_platdata *pdata,
 		div <<= 5;
 		div_mask = RK3588_GMAC_CLK_RGMII_DIV_MASK << 5;
 	}
-
-	div <<= pdata->bus_id ? RK3588_GMAC1_ID_SHIFT : 0;
-	div_mask = pdata->bus_id ? (RK3588_GMAC_CLK_RGMII_DIV_MASK << 5) :
-		   RK3588_GMAC_CLK_RGMII_DIV_MASK;
 
 	rk_clrsetreg(&php_grf->clk_con1, div_mask, div);
 
@@ -700,8 +695,8 @@ static void rk1808_gmac_set_to_rgmii(struct gmac_rockchip_platdata *pdata)
 	rk_clrsetreg(&grf->mac_con0,
 		     RK1808_CLK_RX_DL_CFG_GMAC_MASK |
 		     RK1808_CLK_TX_DL_CFG_GMAC_MASK,
-		     (pdata->rx_delay << RK1808_CLK_RX_DL_CFG_GMAC_SHIFT) |
-		     (pdata->tx_delay << RK1808_CLK_TX_DL_CFG_GMAC_SHIFT));
+		     pdata->rx_delay << RK1808_CLK_RX_DL_CFG_GMAC_SHIFT |
+		     pdata->tx_delay << RK1808_CLK_TX_DL_CFG_GMAC_SHIFT);
 }
 
 static void rk3228_gmac_set_to_rgmii(struct gmac_rockchip_platdata *pdata)
@@ -903,8 +898,8 @@ static void rk3368_gmac_set_to_rgmii(struct gmac_rockchip_platdata *pdata)
 		     RK3368_CLK_TX_DL_CFG_GMAC_MASK,
 		     RK3368_RXCLK_DLY_ENA_GMAC_ENABLE |
 		     RK3368_TXCLK_DLY_ENA_GMAC_ENABLE |
-		     (pdata->rx_delay << RK3368_CLK_RX_DL_CFG_GMAC_SHIFT) |
-		     (pdata->tx_delay << RK3368_CLK_TX_DL_CFG_GMAC_SHIFT));
+		     pdata->rx_delay << RK3368_CLK_RX_DL_CFG_GMAC_SHIFT |
+		     pdata->tx_delay << RK3368_CLK_TX_DL_CFG_GMAC_SHIFT);
 }
 
 static void rk3399_gmac_set_to_rgmii(struct gmac_rockchip_platdata *pdata)
@@ -924,8 +919,8 @@ static void rk3399_gmac_set_to_rgmii(struct gmac_rockchip_platdata *pdata)
 		     RK3399_CLK_TX_DL_CFG_GMAC_MASK,
 		     RK3399_RXCLK_DLY_ENA_GMAC_ENABLE |
 		     RK3399_TXCLK_DLY_ENA_GMAC_ENABLE |
-		     (pdata->rx_delay << RK3399_CLK_RX_DL_CFG_GMAC_SHIFT) |
-		     (pdata->tx_delay << RK3399_CLK_TX_DL_CFG_GMAC_SHIFT));
+		     pdata->rx_delay << RK3399_CLK_RX_DL_CFG_GMAC_SHIFT |
+		     pdata->tx_delay << RK3399_CLK_TX_DL_CFG_GMAC_SHIFT);
 }
 
 static void rv1108_gmac_set_to_rmii(struct gmac_rockchip_platdata *pdata)
@@ -1127,8 +1122,8 @@ static void rk3568_set_to_rgmii(struct gmac_rockchip_platdata *pdata)
 	rk_clrsetreg(con0,
 		     RK3568_CLK_RX_DL_CFG_GMAC_MASK |
 		     RK3568_CLK_TX_DL_CFG_GMAC_MASK,
-		     (pdata->rx_delay << RK3568_CLK_RX_DL_CFG_GMAC_SHIFT) |
-		     (pdata->tx_delay << RK3568_CLK_TX_DL_CFG_GMAC_SHIFT));
+		     pdata->rx_delay << RK3568_CLK_RX_DL_CFG_GMAC_SHIFT |
+		     pdata->tx_delay << RK3568_CLK_TX_DL_CFG_GMAC_SHIFT);
 
 	rk_clrsetreg(con1,
 		     RK3568_TXCLK_DLY_ENA_GMAC_MASK |
@@ -1248,7 +1243,7 @@ static void rk3588_set_to_rgmii(struct gmac_rockchip_platdata *pdata)
 	rk_clrsetreg(offset_con,
 		     RK3588_CLK_TX_DL_CFG_GMAC_MASK |
 		     RK3588_CLK_RX_DL_CFG_GMAC_MASK,
-		     (pdata->tx_delay << RK3588_CLK_TX_DL_CFG_GMAC_SHIFT) |
+		     pdata->tx_delay << RK3588_CLK_TX_DL_CFG_GMAC_SHIFT |
 		     rx_delay);
 
 	rk_clrsetreg(&grf->soc_con7, tx_enable_mask | rx_enable_mask,
@@ -1426,14 +1421,14 @@ static void rv1126_set_to_rgmii(struct gmac_rockchip_platdata *pdata)
 	rk_clrsetreg(&grf->mac_con1,
 		     RV1126_M0_CLK_RX_DL_CFG_GMAC_MASK |
 		     RV1126_M0_CLK_TX_DL_CFG_GMAC_MASK,
-		     (pdata->rx_delay << RV1126_M0_CLK_RX_DL_CFG_GMAC_SHIFT) |
-		     (pdata->tx_delay << RV1126_M0_CLK_TX_DL_CFG_GMAC_SHIFT));
+		     pdata->rx_delay << RV1126_M0_CLK_RX_DL_CFG_GMAC_SHIFT |
+		     pdata->tx_delay << RV1126_M0_CLK_TX_DL_CFG_GMAC_SHIFT);
 
 	rk_clrsetreg(&grf->mac_con2,
 		     RV1126_M1_CLK_RX_DL_CFG_GMAC_MASK |
 		     RV1126_M1_CLK_TX_DL_CFG_GMAC_MASK,
-		     (pdata->rx_delay << RV1126_M1_CLK_RX_DL_CFG_GMAC_SHIFT) |
-		     (pdata->tx_delay << RV1126_M1_CLK_TX_DL_CFG_GMAC_SHIFT));
+		     pdata->rx_delay << RV1126_M1_CLK_RX_DL_CFG_GMAC_SHIFT |
+		     pdata->tx_delay << RV1126_M1_CLK_TX_DL_CFG_GMAC_SHIFT);
 }
 #endif
 

@@ -274,6 +274,7 @@ static int rockchip_combphy_probe(struct udevice *udev)
 {
 	struct rockchip_combphy_priv *priv = dev_get_priv(udev);
 	const struct rockchip_combphy_cfg *phy_cfg;
+	int ret;
 
 	priv->mmio = (void __iomem *)dev_read_addr(udev);
 	if (IS_ERR(priv->mmio))
@@ -289,7 +290,13 @@ static int rockchip_combphy_probe(struct udevice *udev)
 	priv->mode = PHY_TYPE_SATA;
 	priv->cfg = phy_cfg;
 
-	return rockchip_combphy_parse_dt(udev, priv);
+	ret = rockchip_combphy_parse_dt(udev, priv);
+	if (ret)
+		return ret;
+
+	ret = rockchip_combphy_set_mode(priv);
+
+	return ret;
 }
 
 static int rk3568_combphy_cfg(struct rockchip_combphy_priv *priv)

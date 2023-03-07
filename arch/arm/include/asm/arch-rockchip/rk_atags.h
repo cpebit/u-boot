@@ -58,7 +58,9 @@
 #define SERIAL_M_MODE_M2	0x2
 
 /* tag_soc_info.flags */
-#define SOC_FLAGS_TDBT		(1 << 0)
+#define SOC_FLAGS_ET00		0x45543030
+#define SOC_FLAGS_ET01		0x45543031
+#define SOC_FLAGS_ET02		0x45543032
 
 /* pub key programmed magic */
 #define PUBKEY_FUSE_PROGRAMMED	0x4B415352
