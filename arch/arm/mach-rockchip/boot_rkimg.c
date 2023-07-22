@@ -325,7 +325,7 @@ void setup_download_mode(void)
 		printf("download %skey pressed... ",
 		       is_hotkey(HK_ROCKUSB_DNL) ? "hot" : "");
 #ifdef CONFIG_CMD_ROCKUSB
-		vbus = rockchip_u2phy_vbus_detect();
+		//vbus = rockchip_u2phy_vbus_detect();
 #endif
 		if (vbus > 0) {
 			printf("%sentering download mode...\n",
