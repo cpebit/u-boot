@@ -28,8 +28,8 @@
         button@0 {
             gpio-key,wakeup = <1>;
             gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;
-            label = "KEY_VOLUMEUP";
-            linux,code = <KEY_VOLUMEUP>;
+            label = "KEY_F15";
+            linux,code = <KEY_F15>;
             pinctrl-names = "default";
             pinctrl-0 = <&pwrbtn>;
             u-boot,dm-spl;
