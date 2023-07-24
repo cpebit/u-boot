@@ -299,7 +299,7 @@ void rockchip_set_bootdev(struct blk_desc *desc)
 __weak int rockchip_dnl_key_pressed(void)
 {
 #if defined(CONFIG_DM_KEY)
-	return key_is_pressed(key_read(KEY_VOLUMEUP));
+	return key_is_pressed(key_read(KEY_F15));
 
 #elif defined(CONFIG_ADC)
 	const void *blob = gd->fdt_blob;
@@ -333,9 +333,7 @@ void setup_download_mode(void)
 	if (rockchip_dnl_key_pressed() || is_hotkey(HK_ROCKUSB_DNL)) {
 		printf("download %skey pressed... ",
 		       is_hotkey(HK_ROCKUSB_DNL) ? "hot" : "");
-#ifdef CONFIG_CMD_ROCKUSB
-		vbus = rockchip_u2phy_vbus_detect();
-#endif
+
 		if (vbus > 0) {
 			printf("%sentering download mode...\n",
 			       IS_ENABLED(CONFIG_CMD_ROCKUSB) ?
