@@ -27,7 +27,7 @@
 
         button@0 {
             gpio-key,wakeup = <1>;
-            gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;
+            gpios = <&gpio1 RK_PB1 GPIO_ACTIVE_LOW>;
             label = "KEY_F15";
             linux,code = <KEY_F15>;
             pinctrl-names = "default";
@@ -45,7 +45,7 @@
 &pinctrl {
 	keys {
 		pwrbtn: pwrbtn {
-			rockchip,pins = <RK_GPIO2 RK_PA5 RK_FUNC_GPIO &pcfg_pull_up>;
+			rockchip,pins = <RK_GPIO1 RK_PB1 RK_FUNC_GPIO &pcfg_pull_up>;
 		};
 	};
 };
