@@ -50,6 +50,7 @@
 #include <asm/arch/resource_img.h>
 #include <asm/arch/rk_atags.h>
 #include <asm/arch/vendor.h>
+#include <hash.h>
 #include <u-boot/sha256.h>
 #ifdef CONFIG_ROCKCHIP_EINK_DISPLAY
 #include <rk_eink.h>
