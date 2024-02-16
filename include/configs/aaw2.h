@@ -17,6 +17,14 @@
 #undef CONFIG_CONSOLE_SCROLL_LINES
 #define CONFIG_CONSOLE_SCROLL_LINES            10
 
+#define ENV_MEM_LAYOUT_SETTINGS \
+    "scriptaddr=0x00b00000\0" \
+    "pxefile_addr_r=0x00c00000\0" \
+    "fdt_addr_r=0x00c00000\0" \
+    "kernel_addr_c=0x00808000\0" \
+    "kernel_addr_r=0x00008000\0" \
+    "ramdisk_addr_r=0x000e00000\0"
+
 #undef CONFIG_EXTRA_ENV_SETTINGS
 #define CONFIG_EXTRA_ENV_SETTINGS \
     ENV_MEM_LAYOUT_SETTINGS \
