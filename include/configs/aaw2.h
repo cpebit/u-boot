@@ -30,8 +30,8 @@
     ENV_MEM_LAYOUT_SETTINGS \
     ROCKCHIP_DEVICE_SETTINGS \
     "env_saved=0\0" \
-    "devnum=1" \
-    "devtype=mtd" \
+    "devnum=1\0" \
+    "devtype=mtd\0" \
     "bootpart=5\0" \
     "prefix=/boot/\0" \
     "bootlimit=5\0" \
@@ -73,7 +73,7 @@
     "saveenv; " \
     "fi; " \
     "echo Booting from ${devtype} ${devnum}:${bootpart}; " \
-    "load ${devtype} ${devnum}:5 ${ramdisk_addr_r}; " \
+    "load ${devtype} ${devnum}:${bootpart} ${ramdisk_addr_r}; " \
     "bootm ${ramdisk_addr_r}"
 #endif
 
