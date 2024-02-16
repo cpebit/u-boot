@@ -73,7 +73,7 @@
     "saveenv; " \
     "fi; " \
     "echo Booting from ${devtype} ${devnum}:${bootpart}; " \
-    "load ${devtype} ${devnum}:${bootpart} ${ramdisk_addr_r}; " \
+    "load ${devtype} ${devnum}:5 ${ramdisk_addr_r}; " \
     "bootm ${ramdisk_addr_r}"
 #endif
 
