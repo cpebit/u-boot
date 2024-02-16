@@ -25,6 +25,28 @@
     "kernel_addr_r=0x00008000\0" \
     "ramdisk_addr_r=0x000e00000\0"
 
+#define RKIMG_DET_BOOTDEV \
+    "rkimg_bootdev=" \
+    "if mmc dev 1 && rkimgtest mmc 1; then " \
+        "setenv devtype mmc; setenv devnum 1; echo Boot from SDcard;" \
+    "elif mmc dev 0; then " \
+        "setenv devtype mmc; setenv devnum 0;" \
+    "elif mtd_blk dev 0; then " \
+        "setenv devtype mtd; setenv devnum 0;" \
+    "elif mtd_blk dev 1; then " \
+        "setenv devtype mtd; setenv devnum 1;" \
+    "elif mtd_blk dev 2; then " \
+        "setenv devtype mtd; setenv devnum 2;" \
+    "elif rknand dev 0; then " \
+        "setenv devtype rknand; setenv devnum 0;" \
+    "elif rksfc dev 0; then " \
+        "setenv devtype spinand; setenv devnum 0;" \
+    "elif rksfc dev 1; then " \
+        "setenv devtype spinor; setenv devnum 1;" \
+    "else" \
+        "setenv devtype ramdisk; setenv devnum 0;" \
+    "fi; \0"
+
 #undef CONFIG_EXTRA_ENV_SETTINGS
 #define CONFIG_EXTRA_ENV_SETTINGS \
     ENV_MEM_LAYOUT_SETTINGS \
