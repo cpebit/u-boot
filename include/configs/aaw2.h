@@ -70,7 +70,6 @@
     "then " \
     "echo Environment not saved yet, saving...; " \
     "setenv env_saved 1; " \
-    "saveenv; " \
     "fi; " \
     "echo Booting from ${devtype} ${devnum}:${bootpart}; " \
     "boot_fit;"
