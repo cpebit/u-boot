@@ -10,6 +10,7 @@
 #include <sysmem.h>
 #include <asm/arch/fit.h>
 #include <asm/arch/resource_img.h>
+#include <stdlib.h>
 #include <string.h>
 
 DECLARE_GLOBAL_DATA_PTR;
