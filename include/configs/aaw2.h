@@ -19,9 +19,6 @@
 
 #undef CONFIG_EXTRA_ENV_SETTINGS
 #define CONFIG_EXTRA_ENV_SETTINGS \
-    ENV_MEM_LAYOUT_SETTINGS \
-    ROCKCHIP_DEVICE_SETTINGS \
-    RKIMG_DET_BOOTDEV \
     "env_saved=0\0" \
     "bootpart=1\0" \
     "prefix=/boot/\0" \
