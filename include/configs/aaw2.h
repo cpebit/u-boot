@@ -71,7 +71,7 @@
     "setenv env_saved 1; " \
     "saveenv; " \
     "fi; " \
-    "echo Booting from ${devtype} ${devnum}:${bootpart}; " \
+    "echo Booting from ${devtype}${devnum}:boot${bootpart}; " \
     "boot_fit;"
 #endif
 
