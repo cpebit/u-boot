@@ -32,7 +32,7 @@
     "env_saved=0\0" \
     "devnum=1" \
     "devtype=mtd" \
-    "bootpart=1\0" \
+    "bootpart=5\0" \
     "prefix=/boot/\0" \
     "bootlimit=5\0" \
     "upgrade_available=0\0" \
@@ -40,9 +40,9 @@
     "altbootcmd=" \
     "if test ${bootpart} -eq 1; " \
     "then " \
-    "setenv bootpart 2; " \
+    "setenv bootpart 5; " \
     "else " \
-    "setenv bootpart 1; " \
+    "setenv bootpart 5; " \
     "fi; " \
     "setenv upgrade_available 0; " \
     "setenv bootcount 0; " \
@@ -73,8 +73,8 @@
     "saveenv; " \
     "fi; " \
     "echo Booting from ${devtype} ${devnum}:${bootpart}; " \
-    "load ${devtype} ${devnum}:${bootpart} ${scriptaddr} ${prefix}boot.scr; " \
-    "source ${scriptaddr}"
+    "load ${devtype} ${devnum}:${bootpart} ${ramdisk_addr_r}; " \
+    "bootm ${ramdisk_addr_r}"
 #endif
 
 #endif /* !CONFIG_SPL_BUILD */
