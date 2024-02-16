@@ -17,13 +17,12 @@
 #undef CONFIG_CONSOLE_SCROLL_LINES
 #define CONFIG_CONSOLE_SCROLL_LINES            10
 
+#undef CONFIG_EXTRA_ENV_SETTINGS
 #define CONFIG_EXTRA_ENV_SETTINGS \
-    CONFIG_EXTRA_ENV_SETTINGS \
     ENV_MEM_LAYOUT_SETTINGS \
     ROCKCHIP_DEVICE_SETTINGS \
+    RKIMG_DET_BOOTDEV \
     "env_saved=0\0" \
-    "devtype=mmc\0" \
-    "devnum=1\0" \
     "bootpart=1\0" \
     "prefix=/boot/\0" \
     "bootlimit=5\0" \
