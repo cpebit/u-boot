@@ -40,9 +40,9 @@
     "altbootcmd=" \
     "if test ${bootpart} -eq 1; " \
     "then " \
-    "setenv bootpart 5; " \
+    "setenv bootpart 2; " \
     "else " \
-    "setenv bootpart 5; " \
+    "setenv bootpart 1; " \
     "fi; " \
     "setenv upgrade_available 0; " \
     "setenv bootcount 0; " \
@@ -73,8 +73,7 @@
     "saveenv; " \
     "fi; " \
     "echo Booting from ${devtype} ${devnum}:${bootpart}; " \
-    "load ${devtype} ${devnum}:${bootpart} ${ramdisk_addr_r}; " \
-    "bootm ${ramdisk_addr_r}"
+    "boot_fit;"
 #endif
 
 #endif /* !CONFIG_SPL_BUILD */
