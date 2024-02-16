@@ -33,7 +33,6 @@
     "devnum=1\0" \
     "devtype=mtd\0" \
     "bootpart=1\0" \
-    "prefix=/boot/\0" \
     "bootlimit=5\0" \
     "upgrade_available=0\0" \
     "bootcount=0\0" \
