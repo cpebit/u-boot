@@ -37,7 +37,7 @@
     };
 };
 
-&gpio2 {
+&gpio1 {
 	u-boot,dm-spl;
 	status = "okay";
 };
