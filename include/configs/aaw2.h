@@ -76,6 +76,7 @@
     "saveenv; " \
     "fi; " \
     "echo Booting from ${devtype}${devnum}:boot${bootpart}; " \
+    "setenv bootargs \"${bootargs} ubi.mtd=rootfs${bootpart} ubi.mtd=userdata ubi.block=0,rootfs${bootpart} root=/dev/ubiblock0_0 rootfstype=squashfs\"; " \
     "boot_fit;"
 #endif
 
