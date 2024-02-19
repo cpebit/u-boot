@@ -162,30 +162,30 @@ static void *fit_get_blob(struct blk_desc *dev_desc,
 		return NULL;
 
 	if (blk_dread(dev_desc, part.start, blk_num, fdt) != blk_num) {
-        FIT_I("Failed to read fdt header\n");
+		debug("Failed to read fdt header\n");
 		goto fail;
 	}
 
 	if (fdt_check_header(fdt)) {
-        FIT_I("No fdt header\n");
+		debug("No fdt header\n");
 		goto fail;
 	}
 
 	if (!fit_is_ext_type(fdt)) {
-        FIT_I("Not external type\n");
+		debug("Not external type\n");
 		goto fail;
 	}
 
 	blk_num = DIV_ROUND_UP(fdt_totalsize(fdt), dev_desc->blksz);
 	fit = memalign(ARCH_DMA_MINALIGN, blk_num * dev_desc->blksz);
 	if (!fit) {
-        FIT_I("No memory\n");
+		debug("No memory\n");
 		goto fail;
 	}
 
 	if (blk_dread(dev_desc, part.start, blk_num, fit) != blk_num) {
 		free(fit);
-        FIT_I("Failed to read fit blob\n");
+		debug("Failed to read fit blob\n");
 		goto fail;
 	}
 

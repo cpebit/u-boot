@@ -212,7 +212,6 @@ char *envf_get_part_table(struct blk_desc *desc)
 	if (!env)
 		goto out;
 
-    ENVF_MSG("INIT");
 	ENVF_MSG("Primary 0x%08lx - 0x%08lx\n", env_offset, env_offset + env_size);
 	if (env_offset_redund)
 		ENVF_MSG("Backup  0x%08lx - 0x%08lx\n",

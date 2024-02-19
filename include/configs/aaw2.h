@@ -11,6 +11,10 @@
 #define CONFIG_BOOTCOUNT_LIMIT
 #define CONFIG_BOOTCOUNT_ENV
 
+#define CONFIG_ENV_NAND_OFFSET 0x0
+#define CONFIG_ENV_NAND_OFFSET_REDUND 0x20000
+#define CONFIG_ENV_NAND_SIZE 0x20000
+
 #define ROCKCHIP_DEVICE_SETTINGS \
             "stdout=serial,vidconsole\0" \
             "stderr=serial,vidconsole\0"
