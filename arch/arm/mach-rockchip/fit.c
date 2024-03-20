@@ -143,7 +143,7 @@ static void *fit_get_blob(struct blk_desc *dev_desc,
 {
 	__maybe_unused int conf_noffset;
 	disk_partition_t part;
-	char part_name[6] = PART_BOOT;
+	char part_name[10] = PART_BOOT;
 	void *fit, *fdt;
 	int blk_num;
 
