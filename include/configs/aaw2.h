@@ -29,7 +29,7 @@
     "kernel_addr_c=0x00808000\0" \
     "kernel_addr_r=0x00008000\0" \
     "ramdisk_addr_r=0x000e00000\0" \
-    "loadaddr="CONFIG_SYS_LOAD_ADDR"\0"
+    "loadaddr="#CONFIG_SYS_LOAD_ADDR"\0"
 
 #undef CONFIG_EXTRA_ENV_SETTINGS
 #define CONFIG_EXTRA_ENV_SETTINGS \
