@@ -72,7 +72,7 @@
     "saveenv; " \
     "fi; " \
     "echo Booting from ${devtype}${devnum}:boot${bootpart}; " \
-    "setenv bootargs \"${bootargs} rk_dma_heap_cma=16M ubi.mtd=root ubi.block=0,rootfs${bootpart} root=/dev/ubiblock0_rootfs${bootpart} rootfstype=squashfs\"; " \
+    "setenv bootargs \"${bootargs} rk_dma_heap_cma=16M ubi.mtd=root ubi.block=0,rootfs${bootpart} root=/dev/ubiblock0_rootfs${bootpart} rootfstype=squashfs systemd.machine_id=${cpuid#}\"; " \
     "boot_fit;"
 #endif
 
