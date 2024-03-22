@@ -1,4 +1,3 @@
-#define DEBUG
 /*
  * (C) Copyright 2002
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
