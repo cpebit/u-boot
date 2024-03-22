@@ -25,8 +25,7 @@
     "fdt_addr_r=0x00c00000\0" \
     "kernel_addr_c=0x00808000\0" \
     "kernel_addr_r=0x00008000\0" \
-    "ramdisk_addr_r=0x000e00000\0" \
-    "loadaddr=0x00e00800\0"
+    "ramdisk_addr_r=0x000e00000\0"
 
 #undef CONFIG_EXTRA_ENV_SETTINGS
 #define CONFIG_EXTRA_ENV_SETTINGS \
