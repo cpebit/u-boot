@@ -84,15 +84,6 @@ __weak int rk_board_init(void)
 }
 
 #ifdef CONFIG_ROCKCHIP_SET_ETHADDR
-/*
- * define serialno max length, the max length is 512 Bytes
- * The remaining bytes are used to ensure that the first 512 bytes
- * are valid when executing 'env_set("serial#", value)'.
- */
-#define VENDOR_SN_MAX	513
-#define CPUID_LEN	0x10
-#define CPUID_OFF	0x07
-
 #define MAX_ETHERNET	0x2
 
 static int rockchip_set_ethaddr(void)
@@ -175,6 +166,15 @@ static int rockchip_set_ethaddr(void)
 #endif
 
 #ifdef CONFIG_ROCKCHIP_SET_SN
+/*
+ * define serialno max length, the max length is 512 Bytes
+ * The remaining bytes are used to ensure that the first 512 bytes
+ * are valid when executing 'env_set("serial#", value)'.
+ */
+#define VENDOR_SN_MAX	513
+#define CPUID_LEN	0x10
+#define CPUID_OFF	0x07
+
 static int rockchip_set_serialno(void)
 {
 	u8 low[CPUID_LEN / 2], high[CPUID_LEN / 2];
@@ -409,11 +409,11 @@ static void cmdline_handle(void)
 
 int board_late_init(void)
 {
-#ifdef CONFIG_ROCKCHIP_SET_ETHADDR
-	rockchip_set_ethaddr();
-#endif
 #ifdef CONFIG_ROCKCHIP_SET_SN
 	rockchip_set_serialno();
+#endif
+#ifdef CONFIG_ROCKCHIP_SET_ETHADDR
+    rockchip_set_ethaddr();
 #endif
 	setup_download_mode();
 #if (CONFIG_ROCKCHIP_BOOT_MODE_REG > 0)
