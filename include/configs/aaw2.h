@@ -74,7 +74,7 @@
     "setenv env_saved 1; " \
     "saveenv; " \
     "fi; " \
-    "echo Booting from ${devtype}${devnum}:boot${bootpart}; " \
+    "echo Booting from boot${bootpart}; " \
     "setenv bootargs \"${bootargs} rk_dma_heap_cma=16M ubi.mtd=root ubi.block=0,rootfs${bootpart} root=/dev/ubiblock0_rootfs${bootpart} rootfstype=squashfs systemd.machine_id=${cpuid#}\"; " \
     "ubi part root; " \
     "ubi read ${loadaddr} boot${bootpart}; " \
