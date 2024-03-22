@@ -21,6 +21,7 @@
 #undef CONFIG_CONSOLE_SCROLL_LINES
 #define CONFIG_CONSOLE_SCROLL_LINES            10
 
+#undef ENV_MEM_LAYOUT_SETTINGS
 #define ENV_MEM_LAYOUT_SETTINGS \
     "scriptaddr=0x00b00000\0" \
     "pxefile_addr_r=0x00c00000\0" \
