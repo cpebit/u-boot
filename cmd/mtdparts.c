@@ -1,3 +1,4 @@
+#define DEBUG
 /*
  * (C) Copyright 2002
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
@@ -91,8 +92,6 @@
 #endif
 
 DECLARE_GLOBAL_DATA_PTR;
-
-#define debug(fmt,args...)	printf(fmt ,##args)
 
 /* special size referring to all the remaining space in a partition */
 #define SIZE_REMAINING		(~0llu)
