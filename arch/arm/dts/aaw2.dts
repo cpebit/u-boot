@@ -59,5 +59,6 @@
 };
 
 &otp {
+    u-boot,dm-spl;
     status = "okay";
 };
