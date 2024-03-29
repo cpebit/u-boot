@@ -173,7 +173,7 @@ static int rockchip_set_ethaddr(void)
  */
 #define VENDOR_SN_MAX	513
 #define CPUID_LEN	0x10
-#define CPUID_OFF	0x07
+#define CPUID_OFF	0x0a
 
 static int rockchip_set_serialno(void)
 {
