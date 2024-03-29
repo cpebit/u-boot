@@ -62,8 +62,3 @@
     u-boot,dm-spl;
     status = "okay";
 };
-
-&cpuinfo {
-    u-boot,dm-spl;
-    status = "okay";
-};
