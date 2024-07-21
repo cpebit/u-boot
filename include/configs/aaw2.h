@@ -74,8 +74,10 @@
     "saveenv; " \
     "fi; " \
     "echo Booting from boot${bootpart}; " \
-    "setenv bootargs \"${bootargs} rk_dma_heap_cma=16M ubi.mtd=rootfs${bootpart} ubi.mtd=userdata ubi.block=0,rootfs root=/dev/ubiblock0_rootfs rootfstype=squashfs\"; " \
-    "boot_fit;"
+    "setenv bootargs \"${bootargs} rk_dma_heap_cma=16M ubi.mtd=root ubi.block=0,rootfs${bootpart} root=/dev/ubiblock0_rootfs${bootpart} rootfstype=ubifs systemd.machine_id=${cpuid#}\"; " \
+    "ubi part root; " \
+    "ubi read ${loadaddr} boot${bootpart}; " \
+    "bootm ${loadaddr};"
 #endif
 
 #endif /* !CONFIG_SPL_BUILD */
