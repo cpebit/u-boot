@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Copyright (c) 2021 Fuzhou Rockchip Electronics Co., Ltd.
+ */
+
+/dts-v1/;
+
+#include "rv1106.dtsi"
+#include "rv1106-u-boot.dtsi"
+#include <dt-bindings/input/input.h>
+
+/ {
+    model = "AAWireless 2B";
+    compatible = "rockchip,aaw2b", "rockchip,rv1106";
+
+    chosen {
+        stdout-path = &uart2;
+        u-boot,spl-boot-order = &spi_nand;
+    };
+
+    gpio-keys {
+        compatible = "gpio-keys";
+        #address-cells = <1>;
+        #size-cells = <0>;
+        u-boot,dm-spl;
+        status = "okay";
+
+        button@0 {
+            gpio-key,wakeup = <1>;
+            gpios = <&gpio3 RK_PC5 GPIO_ACTIVE_LOW>;
+            label = "KEY_F15";
+            linux,code = <KEY_F15>;
+            pinctrl-names = "default";
+            pinctrl-0 = <&pwrbtn>;
+            u-boot,dm-spl;
+        };
+    };
+};
+
+&gpio1 {
+    u-boot,dm-spl;
+    status = "okay";
+};
+
+&pinctrl {
+    keys {
+        pwrbtn: pwrbtn {
+            rockchip,pins = <RK_GPIO3 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
+        };
+    };
+};
+
+&sdmmc {
+    status = "disabled";
+};
+
+&emmc {
+    status = "disabled";
+};
+
+&otp {
+    u-boot,dm-spl;
+    status = "okay";
+};
+
+&uart2 {
+    status = "okay";
+};

@@ -10,6 +10,11 @@ config TARGET_AAW2
 	help
 	  AAWireless 2.
 
+config TARGET_AAW2B
+	bool "AAW2B"
+	help
+	  AAWireless 2B.
+
 config SYS_SOC
 	default "rockchip"
 
@@ -18,5 +23,6 @@ config SYS_MALLOC_F_LEN
 
 source board/rockchip/evb_rv1106/Kconfig
 source board/rockchip/aaw2/Kconfig
+source board/rockchip/aaw2b/Kconfig
 
 endif
