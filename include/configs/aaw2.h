@@ -74,6 +74,7 @@
     "saveenv; " \
     "fi; " \
     "echo Booting from boot${bootpart}; " \
+    "setenv bootargs \"${bootargs} ubi.mtd=root ubi.block=0,rootfs${bootpart} root=/dev/ubiblock0_rootfs${bootpart} rootfstype=squashfs systemd.machine_id=${cpuid#}\"; " \
     "ubi part root; " \
     "ubi read ${loadaddr} boot${bootpart}; " \
     "bootm ${loadaddr};"
