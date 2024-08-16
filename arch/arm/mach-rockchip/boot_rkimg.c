@@ -289,28 +289,28 @@ void rockchip_set_bootdev(struct blk_desc *desc)
 
 __weak int rockchip_dnl_key_pressed(void)
 {
-#if defined(CONFIG_DM_KEY)
-	return key_is_pressed(key_read(KEY_F15));
-
-#elif defined(CONFIG_ADC)
-	const void *blob = gd->fdt_blob;
-	int node, ret, channel = 1;
-	u32 val, chns[2];
-
-	node = fdt_node_offset_by_compatible(blob, 0, "adc-keys");
-	if (node >= 0) {
-		if (!fdtdec_get_int_array(blob, node, "io-channels", chns, 2))
-			channel = chns[1];
-	}
-
-	ret = adc_channel_single_shot("saradc", channel, &val);
-	if (ret) {
-		printf("%s: Failed to read saradc, ret=%d\n", __func__, ret);
-		return 0;
-	}
-
-	return ((val >= KEY_DOWN_MIN_VAL) && (val <= KEY_DOWN_MAX_VAL));
-#endif
+//#if defined(CONFIG_DM_KEY)
+//	return key_is_pressed(key_read(KEY_F15));
+//
+//#elif defined(CONFIG_ADC)
+//	const void *blob = gd->fdt_blob;
+//	int node, ret, channel = 1;
+//	u32 val, chns[2];
+//
+//	node = fdt_node_offset_by_compatible(blob, 0, "adc-keys");
+//	if (node >= 0) {
+//		if (!fdtdec_get_int_array(blob, node, "io-channels", chns, 2))
+//			channel = chns[1];
+//	}
+//
+//	ret = adc_channel_single_shot("saradc", channel, &val);
+//	if (ret) {
+//		printf("%s: Failed to read saradc, ret=%d\n", __func__, ret);
+//		return 0;
+//	}
+//
+//	return ((val >= KEY_DOWN_MIN_VAL) && (val <= KEY_DOWN_MAX_VAL));
+//#endif
 
 	return 0;
 }
