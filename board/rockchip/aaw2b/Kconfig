@@ -1,4 +1,4 @@
-if TARGET_AAW2
+if TARGET_AAW2B
 
 config SYS_BOARD
 	default "aaw2b"
