@@ -62,7 +62,3 @@
     u-boot,dm-spl;
     status = "okay";
 };
-
-&uart2 {
-    status = "okay";
-};
