@@ -7,6 +7,8 @@
 #ifndef __CONFIG_RK3568_COMMON_H
 #define __CONFIG_RK3568_COMMON_H
 
+#define CFG_CPUID_OFFSET		0xa
+
 #include "rockchip-common.h"
 
 #define CONFIG_SPL_FRAMEWORK
@@ -15,6 +17,10 @@
 #define CONFIG_SPL_BSS_START_ADDR	0x03fe0000
 #define CONFIG_SPL_BSS_MAX_SIZE		0x00010000
 #define CONFIG_SPL_STACK		0x03fe0000
+#ifdef CONFIG_SPL_LOAD_FIT_ADDRESS
+#undef CONFIG_SPL_LOAD_FIT_ADDRESS
+#endif
+#define CONFIG_SPL_LOAD_FIT_ADDRESS	0x10000000
 
 #define CONFIG_SYS_MALLOC_LEN		(32 << 20)
 #define CONFIG_SYS_CBSIZE		1024
@@ -54,6 +60,7 @@
 					 CONFIG_SYS_SCSI_MAX_LUN)
 #endif
 /* Nand */
+#define CONFIG_SYS_NAND_BASE		0xFE330000
 #define CONFIG_SYS_MAX_NAND_DEVICE	1
 #define CONFIG_SYS_NAND_ONFI_DETECTION
 #define CONFIG_SYS_NAND_PAGE_SIZE	2048
@@ -74,7 +81,7 @@
 #define ENV_MEM_LAYOUT_SETTINGS \
 	"scriptaddr=0x00c00000\0" \
 	"pxefile_addr_r=0x00e00000\0" \
-	"fdt_addr_r=0x0a100000\0" \
+	"fdt_addr_r=0x08300000\0" \
 	"kernel_addr_r=0x00280000\0" \
 	"kernel_addr_c=0x04080000\0" \
 	"ramdisk_addr_r=0x0a200000\0"

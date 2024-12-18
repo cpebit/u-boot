@@ -1131,6 +1131,9 @@ static ulong rv1106_clk_get_rate(struct clk *clk)
 		rate = rv1106_decom_get_clk(priv);
 		break;
 #endif
+	case TCLK_WDT_NS:
+		rate = OSC_HZ;
+		break;
 	default:
 		return -ENOENT;
 	}
@@ -1311,6 +1314,11 @@ static int rv1106_clk_probe(struct udevice *dev)
 	rk_clrsetreg(&priv->cru->core_clksel_con[0],
 		     CLK_CORE_DIV_MASK,
 		     0 << CLK_CORE_DIV_SHIFT);
+
+#if defined(CONFIG_SPL_BUILD) && defined(CONFIG_SPL_KERNEL_BOOT)
+	/* increase the aclk_decom frequency */
+	rv1106_peri_set_clk(priv, ACLK_PERI_ROOT, 400 * MHz);
+#endif
 	return 0;
 }
 
