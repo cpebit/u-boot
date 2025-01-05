@@ -37,11 +37,6 @@
     };
 };
 
-&gpio3 {
-    u-boot,dm-spl;
-    status = "okay";
-};
-
 &pinctrl {
     keys {
         pwrbtn: pwrbtn {
