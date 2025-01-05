@@ -21,6 +21,10 @@
 #include <watchdog.h>
 #include <vsprintf.h>
 
+#ifdef CONFIG_PSTORE
+#include <asm/arch/pstore.h>
+#endif
+
 DECLARE_GLOBAL_DATA_PTR;
 
 static int on_console(const char *name, const char *value, enum env_op op,
@@ -516,13 +520,10 @@ void putc(const char c)
 	if (!gd || gd->flags & GD_FLG_DISABLE_CONSOLE)
 		return;
 
-#ifdef CONFIG_DEBUG_UART
-	/* if we don't have a console yet, use the debug UART */
-	if (!gd || !(gd->flags & GD_FLG_SERIAL_READY)) {
-		printch(c);
-		return;
-	}
+#ifdef CONFIG_PSTORE
+	putc_to_ram(c);
 #endif
+
 #ifdef CONFIG_CONSOLE_RECORD
 	if (gd && (gd->flags & GD_FLG_RECORD) && gd->console_out.start)
 		membuff_putbyte((struct membuff *)&gd->console_out, c);
@@ -532,6 +533,13 @@ void putc(const char c)
 		return;
 #endif
 
+#ifdef CONFIG_DEBUG_UART
+	/* if we don't have a console yet, use the debug UART */
+	if (!gd || !(gd->flags & GD_FLG_SERIAL_READY)) {
+		printch(c);
+		return;
+	}
+#endif
 	if (!gd->have_console)
 		return pre_console_putc(c);
 

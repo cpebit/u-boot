@@ -18,6 +18,7 @@
 #include <linux/media-bus-format.h>
 #include <linux/dw_hdmi.h>
 #include <asm/io.h>
+#include "rockchip_bridge.h"
 #include "rockchip_display.h"
 #include "rockchip_crtc.h"
 #include "rockchip_connector.h"
@@ -37,6 +38,7 @@ enum frl_mask {
 #define DDC_SEGMENT_ADDR	0x30
 
 #define HDMI_EDID_LEN		512
+#define HDMI_EDID_BLOCK_LEN	128
 
 /* DW-HDMI Controller >= 0x200a are at least compliant with SCDC version 1 */
 #define SCDC_MIN_SOURCE_VERSION	0x1
@@ -175,6 +177,9 @@ static bool hdmi_bus_fmt_is_yuv422(unsigned int bus_format)
 	case MEDIA_BUS_FMT_UYVY8_1X16:
 	case MEDIA_BUS_FMT_UYVY10_1X20:
 	case MEDIA_BUS_FMT_UYVY12_1X24:
+	case MEDIA_BUS_FMT_YUYV8_1X16:
+	case MEDIA_BUS_FMT_YUYV10_1X20:
+	case MEDIA_BUS_FMT_YUYV12_1X24:
 		return true;
 
 	default:
@@ -302,8 +307,9 @@ static int dw_hdmi_i2c_read(struct dw_hdmi_qp *hdmi,
 			    unsigned char *buf, unsigned int length)
 {
 	struct dw_hdmi_i2c *i2c = hdmi->i2c;
-	int i = 20;
+	int i = 20, retry;
 	u32 intr = 0;
+	bool read_edid = false;
 
 	if (!i2c->is_regaddr) {
 		printf("set read register address to 0\n");
@@ -311,40 +317,99 @@ static int dw_hdmi_i2c_read(struct dw_hdmi_qp *hdmi,
 		i2c->is_regaddr = true;
 	}
 
-	while (length--) {
-		hdmi_modb(hdmi, i2c->slave_reg++ << 12, I2CM_ADDR,
+	/* edid reads are in 128 bytes. scdc reads are in 1 byte */
+	if (length == HDMI_EDID_BLOCK_LEN)
+		read_edid = true;
+
+	while (length > 0) {
+		retry = 100;
+		hdmi_modb(hdmi, i2c->slave_reg << 12, I2CM_ADDR,
 			  I2CM_INTERFACE_CONTROL0);
 
-		hdmi_modb(hdmi, I2CM_FM_READ, I2CM_WR_MASK,
-			  I2CM_INTERFACE_CONTROL0);
+		if (read_edid) {
+			hdmi_modb(hdmi, I2CM_16BYTES, I2CM_NBYTES_MASK,
+				  I2CM_INTERFACE_CONTROL0);
+			i2c->slave_reg += 16;
+			length -= 16;
+		} else {
+			hdmi_modb(hdmi, I2CM_1BYTES, I2CM_NBYTES_MASK,
+				  I2CM_INTERFACE_CONTROL0);
+			i2c->slave_reg++;
+			length--;
+		}
 
-		while (i--) {
-			udelay(1000);
-			intr = hdmi_readl(hdmi, MAINUNIT_1_INT_STATUS) &
-				(I2CM_OP_DONE_IRQ | I2CM_READ_REQUEST_IRQ |
-				 I2CM_NACK_RCVD_IRQ);
-			if (intr) {
-				hdmi_writel(hdmi, intr, MAINUNIT_1_INT_CLEAR);
-				break;
+		while (retry > 0) {
+			if (!hdmi->phy.ops->read_hpd(hdmi->rk_hdmi)) {
+				debug("hdmi disconnect, stop ddc read\n");
+				return -EPERM;
 			}
+
+			i = 20;
+			hdmi_modb(hdmi, I2CM_FM_READ, I2CM_WR_MASK,
+				  I2CM_INTERFACE_CONTROL0);
+
+			while (i--) {
+				udelay(1000);
+				intr = hdmi_readl(hdmi, MAINUNIT_1_INT_STATUS);
+				intr &= (I2CM_OP_DONE_IRQ |
+					 I2CM_READ_REQUEST_IRQ |
+					 I2CM_NACK_RCVD_IRQ);
+				if (intr) {
+					hdmi_writel(hdmi, intr,
+						    MAINUNIT_1_INT_CLEAR);
+					break;
+				}
+			}
+
+			if (!i) {
+				printf("i2c read time out!\n");
+				hdmi_writel(hdmi, 0x01, I2CM_CONTROL0);
+				retry -= 10;
+				continue;
+			}
+
+			/* Check for error condition on the bus */
+			if (intr & I2CM_NACK_RCVD_IRQ) {
+				printf("i2c read err!\n");
+				hdmi_writel(hdmi, 0x01, I2CM_CONTROL0);
+				retry--;
+				mdelay(10);
+				continue;
+			}
+
+			/* read success */
+			break;
 		}
 
-		if (!i) {
-			printf("i2c read time out!\n");
-			hdmi_writel(hdmi, 0x01, I2CM_CONTROL0);
-			return -EAGAIN;
-		}
-
-		/* Check for error condition on the bus */
-		if (intr & I2CM_NACK_RCVD_IRQ) {
-			printf("i2c read err!\n");
-			hdmi_writel(hdmi, 0x01, I2CM_CONTROL0);
+		if (retry <= 0) {
+			printf("ddc read failed offset:0x%x\n", i2c->slave_reg);
 			return -EIO;
 		}
 
-		*buf++ = hdmi_readl(hdmi, I2CM_INTERFACE_RDDATA_0_3) & 0xff;
+		if (read_edid) {
+			u8 reg_offset, val_offset, i;
+			u32 val, reg;
+
+			for (i = 0; i < 16; i++) {
+				reg_offset = i / 4;
+				val_offset = (i % 4) * 8;
+				reg = I2CM_INTERFACE_RDDATA_0_3 + 4 *
+					reg_offset;
+				val = hdmi_readl(hdmi, reg);
+				*buf++ = (val & (0xff << val_offset)) >>
+					val_offset;
+				debug("i2c read done! 0x%02x\n",
+				      (val & (0xff << val_offset)) >>
+				       val_offset);
+			}
+		} else {
+			*buf++ = hdmi_readl(hdmi, I2CM_INTERFACE_RDDATA_0_3) &
+				0xff;
+			debug("i2c read done! 0x%02x\n",
+			      hdmi_readl(hdmi, I2CM_INTERFACE_RDDATA_0_3));
+		}
+
 		hdmi_modb(hdmi, 0, I2CM_WR_MASK, I2CM_INTERFACE_CONTROL0);
-		i = 20;
 	}
 	i2c->is_segment = false;
 
@@ -355,7 +420,7 @@ static int dw_hdmi_i2c_write(struct dw_hdmi_qp *hdmi,
 			     unsigned char *buf, unsigned int length)
 {
 	struct dw_hdmi_i2c *i2c = hdmi->i2c;
-	int i = 20;
+	int i = 20, retry;
 	u32 intr = 0;
 
 	if (!i2c->is_regaddr) {
@@ -367,37 +432,57 @@ static int dw_hdmi_i2c_write(struct dw_hdmi_qp *hdmi,
 	}
 
 	while (length--) {
-		hdmi_writel(hdmi, *buf++, I2CM_INTERFACE_WRDATA_0_3);
-		hdmi_modb(hdmi, i2c->slave_reg++ << 12, I2CM_ADDR,
-			  I2CM_INTERFACE_CONTROL0);
-		hdmi_modb(hdmi, I2CM_FM_WRITE, I2CM_WR_MASK,
-			  I2CM_INTERFACE_CONTROL0);
+		retry = 100;
 
-		while (i--) {
-			udelay(1000);
-			intr = hdmi_readl(hdmi, MAINUNIT_1_INT_STATUS) &
-				(I2CM_OP_DONE_IRQ | I2CM_READ_REQUEST_IRQ |
-				 I2CM_NACK_RCVD_IRQ);
-			if (intr) {
-				hdmi_writel(hdmi, intr, MAINUNIT_1_INT_CLEAR);
-				break;
+		while (retry > 0) {
+			if (!hdmi->phy.ops->read_hpd(hdmi->rk_hdmi)) {
+				debug("hdmi disconnect, stop ddc read\n");
+				return -EPERM;
 			}
-		}
 
-		if (!i) {
-			printf("i2c write time out!\n");
-			hdmi_writel(hdmi, 0x01, I2CM_CONTROL0);
-			return -EAGAIN;
-		}
+			i = 20;
+			hdmi_writel(hdmi, *buf++, I2CM_INTERFACE_WRDATA_0_3);
+			hdmi_modb(hdmi, i2c->slave_reg++ << 12, I2CM_ADDR,
+				I2CM_INTERFACE_CONTROL0);
+			hdmi_modb(hdmi, I2CM_FM_WRITE, I2CM_WR_MASK,
+				I2CM_INTERFACE_CONTROL0);
 
-		/* Check for error condition on the bus */
-		if (intr & I2CM_NACK_RCVD_IRQ) {
-			printf("i2c write nack!\n");
-			hdmi_writel(hdmi, 0x01, I2CM_CONTROL0);
-			return -EIO;
+			while (i--) {
+				udelay(1000);
+				intr = hdmi_readl(hdmi, MAINUNIT_1_INT_STATUS);
+				intr &= (I2CM_OP_DONE_IRQ |
+					 I2CM_READ_REQUEST_IRQ |
+					 I2CM_NACK_RCVD_IRQ);
+				if (intr) {
+					hdmi_writel(hdmi, intr,
+						    MAINUNIT_1_INT_CLEAR);
+					break;
+				}
+			}
+
+			if (!i) {
+				printf("i2c write time out!\n");
+				hdmi_writel(hdmi, 0x01, I2CM_CONTROL0);
+				retry -= 10;
+				continue;
+			}
+
+			/* Check for error condition on the bus */
+			if (intr & I2CM_NACK_RCVD_IRQ) {
+				printf("i2c write nack!\n");
+				hdmi_writel(hdmi, 0x01, I2CM_CONTROL0);
+				retry--;
+				mdelay(10);
+				continue;
+			}
+			/* write success */
+			break;
 		}
 		hdmi_modb(hdmi, 0, I2CM_WR_MASK, I2CM_INTERFACE_CONTROL0);
-		i = 20;
+		if (retry <= 0) {
+			printf("ddc write failed\n");
+			return -EIO;
+		}
 	}
 
 	return 0;
@@ -512,6 +597,25 @@ hdmi_get_tmdsclock(struct dw_hdmi_qp *hdmi, unsigned long mpixelclock)
 	return tmdsclock;
 }
 
+static void hdmi_infoframe_set_checksum(u8 *ptr, int size)
+{
+	u8 csum = 0;
+	int i;
+
+	ptr[3] = 0;
+	/* compute checksum */
+	for (i = 0; i < size; i++)
+		csum += ptr[i];
+
+	ptr[3] = 256 - csum;
+}
+
+static bool is_hdmi2_sink(struct dw_hdmi_qp *hdmi)
+{
+	return hdmi->edid_data.display_info.hdmi.scdc.supported ||
+		hdmi->edid_data.display_info.color_formats & DRM_COLOR_FORMAT_YCRCB420;
+}
+
 static void hdmi_config_AVI(struct dw_hdmi_qp *hdmi, struct drm_display_mode *mode)
 {
 	struct hdmi_avi_infoframe frame;
@@ -542,7 +646,7 @@ static void hdmi_config_AVI(struct dw_hdmi_qp *hdmi, struct drm_display_mode *mo
 	else
 		frame.colorspace = HDMI_COLORSPACE_RGB;
 
-	/* Set up colorimetry */
+	/* Set up colorimetry and quant range */
 	if (!hdmi_bus_fmt_is_rgb(hdmi->hdmi_data.enc_out_bus_format)) {
 		switch (hdmi->hdmi_data.enc_out_encoding) {
 		case V4L2_YCBCR_ENC_601:
@@ -561,18 +665,53 @@ static void hdmi_config_AVI(struct dw_hdmi_qp *hdmi, struct drm_display_mode *mo
 			frame.extended_colorimetry =
 					HDMI_EXTENDED_COLORIMETRY_XV_YCC_709;
 			break;
+		case V4L2_YCBCR_ENC_BT2020:
+			if (hdmi->hdmi_data.enc_in_encoding == V4L2_YCBCR_ENC_BT2020)
+				frame.colorimetry = HDMI_COLORIMETRY_EXTENDED;
+			else
+				frame.colorimetry = HDMI_COLORIMETRY_ITU_709;
+			frame.extended_colorimetry =
+					HDMI_EXTENDED_COLORIMETRY_BT2020;
+			break;
 		default: /* Carries no data */
 			frame.colorimetry = HDMI_COLORIMETRY_ITU_601;
 			frame.extended_colorimetry =
 					HDMI_EXTENDED_COLORIMETRY_XV_YCC_601;
 			break;
 		}
+
+		frame.ycc_quantization_range = HDMI_YCC_QUANTIZATION_RANGE_LIMITED;
+	} else {
+		if (hdmi->hdmi_data.enc_out_encoding == V4L2_YCBCR_ENC_BT2020) {
+			frame.colorimetry = HDMI_COLORIMETRY_EXTENDED;
+			frame.extended_colorimetry =
+				HDMI_EXTENDED_COLORIMETRY_BT2020;
+		} else {
+			frame.colorimetry = HDMI_COLORIMETRY_NONE;
+			frame.extended_colorimetry =
+				HDMI_EXTENDED_COLORIMETRY_XV_YCC_601;
+		}
+
+		if (is_hdmi2_sink(hdmi) &&
+		    frame.quantization_range == HDMI_QUANTIZATION_RANGE_FULL)
+			frame.ycc_quantization_range = HDMI_YCC_QUANTIZATION_RANGE_FULL;
+		else
+			frame.ycc_quantization_range = HDMI_YCC_QUANTIZATION_RANGE_LIMITED;
 	}
 
 	frame.scan_mode = HDMI_SCAN_MODE_NONE;
-	frame.video_code = hdmi->vic;
 
 	hdmi_avi_infoframe_pack_only(&frame, buff, 17);
+
+	/* mode which vic >= 128 must use avi version 3 */
+	if (hdmi->vic >= 128) {
+		frame.version = 3;
+		buff[1] = frame.version;
+		buff[4] &= 0x1f;
+		buff[4] |= ((frame.colorspace & 0x7) << 5);
+		buff[7] = hdmi->vic;
+		hdmi_infoframe_set_checksum(buff, 17);
+	}
 
 	/*
 	 * The Designware IP uses a different byte format from standard
@@ -597,8 +736,90 @@ static void hdmi_config_AVI(struct dw_hdmi_qp *hdmi, struct drm_display_mode *mo
 
 	hdmi_modb(hdmi, 0, PKTSCHED_AVI_FIELDRATE, PKTSCHED_PKT_CONFIG1);
 
-	hdmi_modb(hdmi, PKTSCHED_AVI_TX_EN | PKTSCHED_GCP_TX_EN,
-		  PKTSCHED_AVI_TX_EN | PKTSCHED_GCP_TX_EN,
+	hdmi_modb(hdmi, PKTSCHED_AVI_TX_EN, PKTSCHED_AVI_TX_EN,
+		  PKTSCHED_PKT_EN);
+}
+
+#define VSI_PKT_TYPE		0x81
+#define VSI_PKT_VERSION		1
+#define HDMI_FORUM_OUI		0xc45dd8
+#define ALLM_MODE		BIT(1)
+#define HDMI_FORUM_LEN		9
+
+static void hdmi_config_vendor_specific_infoframe(struct dw_hdmi_qp *hdmi,
+						  struct drm_display_mode *mode)
+{
+	struct hdmi_vendor_infoframe frame;
+	struct dw_hdmi_link_config *link_cfg = NULL;
+	u8 buffer[10];
+	u32 val;
+	ssize_t err;
+	int i, reg;
+
+	link_cfg = dw_hdmi_rockchip_get_link_cfg(hdmi->rk_hdmi);
+
+	hdmi_modb(hdmi, 0, PKTSCHED_VSI_TX_EN, PKTSCHED_PKT_EN);
+
+	for (i = 0; i <= 7; i++)
+		hdmi_writel(hdmi, 0, PKT_VSI_CONTENTS0 + i * 4);
+
+	if (link_cfg->allm_en) {
+		buffer[0] = VSI_PKT_TYPE;
+		buffer[1] = VSI_PKT_VERSION;
+		buffer[2] = 5;
+		buffer[4] = HDMI_FORUM_OUI & 0xff;
+		buffer[5] = (HDMI_FORUM_OUI >> 8) & 0xff;
+		buffer[6] = (HDMI_FORUM_OUI >> 16) & 0xff;
+		buffer[7] = VSI_PKT_VERSION;
+		buffer[8] = ALLM_MODE;
+
+		hdmi_infoframe_set_checksum(buffer, HDMI_FORUM_LEN);
+
+		err = 9;
+	} else {
+		err = drm_hdmi_vendor_infoframe_from_display_mode(&frame, mode);
+		if (err < 0)
+			/*
+			 * Going into that statement does not means vendor infoframe
+			 * fails. It just informed us that vendor infoframe is not
+			 * needed for the selected mode. Only 4k or stereoscopic 3D
+			 * mode requires vendor infoframe. So just simply return.
+			 */
+			return;
+
+		err = hdmi_vendor_infoframe_pack(&frame, buffer, sizeof(buffer));
+		if (err < 0) {
+			dev_err(hdmi->dev, "Failed to pack vendor infoframe: %zd\n",
+				err);
+			return;
+		}
+	}
+
+	/* vsi header */
+	val = (buffer[2] << 16) | (buffer[1] << 8) | buffer[0];
+	hdmi_writel(hdmi, val, PKT_VSI_CONTENTS0);
+
+	reg = PKT_VSI_CONTENTS1;
+	for (i = 3; i < err; i++) {
+		if (i % 4 == 3)
+			val = buffer[i];
+		if (i % 4 == 0)
+			val |= buffer[i] << 8;
+		if (i % 4 == 1)
+			val |= buffer[i] << 16;
+		if (i % 4 == 2)
+			val |= buffer[i] << 24;
+
+		if ((i % 4 == 2) || (i == (err - 1))) {
+			hdmi_writel(hdmi, val, reg);
+			reg += 4;
+		}
+	}
+
+	hdmi_writel(hdmi, 0, PKT_VSI_CONTENTS7);
+
+	hdmi_modb(hdmi, 0, PKTSCHED_VSI_FIELDRATE, PKTSCHED_PKT_CONFIG1);
+	hdmi_modb(hdmi, PKTSCHED_VSI_TX_EN, PKTSCHED_VSI_TX_EN,
 		  PKTSCHED_PKT_EN);
 }
 
@@ -713,7 +934,14 @@ static int hdmi_start_flt(struct dw_hdmi_qp *hdmi, u8 rate)
 	int i = 0;
 	bool ltsp = false;
 
-	hdmi_modb(hdmi, BIT(6), BIT(6), 0x44);
+	hdmi_modb(hdmi, AVP_DATAPATH_VIDEO_SWDISABLE,
+		  AVP_DATAPATH_VIDEO_SWDISABLE, GLOBAL_SWDISABLE);
+
+	hdmi_writel(hdmi, AVP_DATAPATH_SWINIT_P, GLOBAL_SWRESET_REQUEST);
+
+	/* clear flt flags */
+	drm_scdc_writeb(&hdmi->adap, 0x10, 0xff);
+
 	/* FLT_READY & FFE_LEVELS read */
 	for (i = 0; i < 20; i++) {
 		drm_scdc_readb(&hdmi->adap, SCDC_STATUS_FLAGS_0, &val);
@@ -723,18 +951,18 @@ static int hdmi_start_flt(struct dw_hdmi_qp *hdmi, u8 rate)
 	}
 
 	if (i == 20) {
-		dev_err(hdmi->dev, "sink flt isn't ready\n");
+		printf("sink flt isn't ready\n");
 		return -EINVAL;
 	}
 
 	/* max ffe level 3 */
 	val = 0 << 4 | hdmi_set_frl_mask(rate);
 	drm_scdc_writeb(&hdmi->adap, 0x31, val);
-
 	/* select FRL_RATE & FFE_LEVELS */
 	hdmi_writel(hdmi, ffe_lv, FLT_CONFIG0);
 
-	while (1) {
+	i = 500;
+	while (i--) {
 		mdelay(4);
 		drm_scdc_readb(&hdmi->adap, 0x10, &val);
 
@@ -753,14 +981,14 @@ static int hdmi_start_flt(struct dw_hdmi_qp *hdmi, u8 rate)
 			ln3 = (reg_val >> 4) & 0xf;
 
 			if (!ln0 && !ln1 && !ln2 && !ln3) {
-				printf("ltsp!\n");
+				printf("goto ltsp\n");
 				ltsp = true;
 				hdmi_writel(hdmi, 0, FLT_CONFIG1);
 			} else if ((ln0 == 0xf) | (ln1 == 0xf) | (ln2 == 0xf) | (ln3 == 0xf)) {
-				printf("lts4!\n");
+				printf("goto lts4\n");
 				break;
 			} else if ((ln0 == 0xe) | (ln1 == 0xe) | (ln2 == 0xe) | (ln3 == 0xe)) {
-				printf("ffe!\n");
+				printf("goto ffe\n");
 				break;
 			} else {
 				value = (ln3 << 16) | (ln2 << 12) | (ln1 << 8) | (ln0 << 4) | 0xf;
@@ -771,12 +999,17 @@ static int hdmi_start_flt(struct dw_hdmi_qp *hdmi, u8 rate)
 		drm_scdc_writeb(&hdmi->adap, 0x10, val);
 
 		if ((val & BIT(4)) && ltsp) {
+			hdmi_modb(hdmi, 0, AVP_DATAPATH_VIDEO_SWDISABLE, GLOBAL_SWDISABLE);
 			printf("flt success\n");
 			break;
 		}
 	}
 
-	hdmi_modb(hdmi, 0, BIT(6), 0x44);
+	if (i < 0) {
+		printf("flt time out\n");
+		return -ETIMEDOUT;
+	}
+
 	return 0;
 }
 
@@ -784,19 +1017,18 @@ static int hdmi_start_flt(struct dw_hdmi_qp *hdmi, u8 rate)
 
 static void hdmi_set_op_mode(struct dw_hdmi_qp *hdmi,
 			     struct dw_hdmi_link_config *link_cfg,
-			     bool scdc_support)
+			     struct display_state *state,
+			     struct rockchip_connector *conn)
 {
 	int frl_rate;
-	int i;
+	int i, ret;
 
-	hdmi_writel(hdmi, 0, FLT_CONFIG0);
-	if (scdc_support)
-		drm_scdc_writeb(&hdmi->adap, 0x31, 0);
-	mdelay(200);
 	if (!link_cfg->frl_mode) {
 		printf("dw hdmi qp use tmds mode\n");
 		hdmi_modb(hdmi, 0, OPMODE_FRL, LINK_CONFIG0);
 		hdmi_modb(hdmi, 0, OPMODE_FRL_4LANES, LINK_CONFIG0);
+		hdmi->phy.ops->init(conn, hdmi->rk_hdmi, state);
+		hdmi->phy.enabled = true;
 		return;
 	}
 
@@ -809,16 +1041,28 @@ static void hdmi_set_op_mode(struct dw_hdmi_qp *hdmi,
 	hdmi_modb(hdmi, 1, OPMODE_FRL, LINK_CONFIG0);
 
 	frl_rate = link_cfg->frl_lanes * link_cfg->rate_per_lane;
-	hdmi_start_flt(hdmi, frl_rate);
+	hdmi->phy.ops->init(conn, hdmi->rk_hdmi, state);
+	hdmi->phy.enabled = true;
 
-	for (i = 0; i < 50; i++) {
+	mdelay(200);
+	ret = hdmi_start_flt(hdmi, frl_rate);
+	if (ret) {
+		hdmi_writel(hdmi, 0, FLT_CONFIG0);
+		drm_scdc_writeb(&hdmi->adap, 0x31, 0);
+		hdmi_modb(hdmi, 0, AVP_DATAPATH_VIDEO_SWDISABLE, GLOBAL_SWDISABLE);
+		return;
+	}
+
+	for (i = 0; i < 200; i++) {
 		hdmi_modb(hdmi, PKTSCHED_NULL_TX_EN, PKTSCHED_NULL_TX_EN, PKTSCHED_PKT_EN);
-		mdelay(1);
+		udelay(50);
 		hdmi_modb(hdmi, 0, PKTSCHED_NULL_TX_EN, PKTSCHED_PKT_EN);
+		udelay(50);
 	}
 }
 
 static int dw_hdmi_setup(struct dw_hdmi_qp *hdmi,
+			 struct rockchip_connector *conn,
 			 struct drm_display_mode *mode,
 			 struct display_state *state)
 {
@@ -886,12 +1130,12 @@ static int dw_hdmi_setup(struct dw_hdmi_qp *hdmi,
 	hdmi->hdmi_data.video_mode.mdataenablepolarity = true;
 
 	/* HDMI Initialization Step B.2 */
-	ret = hdmi->phy.ops->init(hdmi->rk_hdmi, state);
-	if (ret)
-		return ret;
-	hdmi->phy.enabled = true;
+	hdmi->phy.ops->set_pll(conn, hdmi->rk_hdmi, state);
 
-	rk3588_set_grf_cfg(hdmi->rk_hdmi);
+	/* Mark yuv422 10bit */
+	if (hdmi->hdmi_data.enc_out_bus_format == MEDIA_BUS_FMT_YUYV10_1X20)
+		hdmi_writel(hdmi, BIT(20), VIDEO_INTERFACE_CONFIG0);
+	dw_hdmi_qp_set_grf_cfg(hdmi->rk_hdmi);
 	link_cfg = dw_hdmi_rockchip_get_link_cfg(hdmi->rk_hdmi);
 
 	/* not for DVI mode */
@@ -899,6 +1143,10 @@ static int dw_hdmi_setup(struct dw_hdmi_qp *hdmi,
 		printf("%s HDMI mode\n", __func__);
 		hdmi_modb(hdmi, 0, OPMODE_DVI, LINK_CONFIG0);
 		hdmi_modb(hdmi, HDCP2_BYPASS, HDCP2_BYPASS, HDCP2LOGIC_CONFIG0);
+		hdmi_modb(hdmi, KEEPOUT_REKEY_ALWAYS, KEEPOUT_REKEY_CFG, FRAME_COMPOSER_CONFIG9);
+		hdmi_writel(hdmi, 0, FLT_CONFIG0);
+		if (hdmi_info->scdc.supported)
+			drm_scdc_writeb(&hdmi->adap, 0x31, 0);
 		if (!link_cfg->frl_mode) {
 			if (vmode->mtmdsclock > HDMI14_MAX_TMDSCLK) {
 				drm_scdc_readb(&hdmi->adap, SCDC_SINK_VERSION, &bytes);
@@ -907,6 +1155,7 @@ static int dw_hdmi_setup(struct dw_hdmi_qp *hdmi,
 				drm_scdc_set_high_tmds_clock_ratio(&hdmi->adap, 1);
 				drm_scdc_set_scrambling(&hdmi->adap, 1);
 				hdmi_writel(hdmi, 1, SCRAMB_CONFIG0);
+				mdelay(100);
 			} else {
 				if (hdmi_info->scdc.supported) {
 					drm_scdc_set_high_tmds_clock_ratio(&hdmi->adap, 0);
@@ -917,12 +1166,25 @@ static int dw_hdmi_setup(struct dw_hdmi_qp *hdmi,
 		}
 		/* HDMI Initialization Step F - Configure AVI InfoFrame */
 		hdmi_config_AVI(hdmi, mode);
+		hdmi_config_vendor_specific_infoframe(hdmi, mode);
 		hdmi_config_CVTEM(hdmi, link_cfg);
-		hdmi_set_op_mode(hdmi, link_cfg, hdmi_info->scdc.supported);
+		hdmi_set_op_mode(hdmi, link_cfg, state, conn);
+		/* clear avmute */
+		mdelay(50);
+		hdmi_writel(hdmi, 2, PKTSCHED_PKT_CONTROL0);
+		hdmi_modb(hdmi, PKTSCHED_GCP_TX_EN, PKTSCHED_GCP_TX_EN,
+			  PKTSCHED_PKT_EN);
 	} else {
 		hdmi_modb(hdmi, OPMODE_DVI, OPMODE_DVI, LINK_CONFIG0);
+		ret = hdmi->phy.ops->init(conn, hdmi->rk_hdmi, state);
+		if (ret)
+			return ret;
+		hdmi->phy.enabled = true;
 		printf("%s DVI mode\n", __func__);
 	}
+
+	/* Mark uboot hdmi is enabled */
+	hdmi_writel(hdmi, BIT(21), VIDEO_INTERFACE_CONFIG0);
 
 	return 0;
 }
@@ -931,9 +1193,15 @@ int dw_hdmi_detect_hotplug(struct dw_hdmi_qp *hdmi,
 			   struct display_state *state)
 {
 	struct connector_state *conn_state = &state->conn_state;
+	struct rockchip_connector *conn = conn_state->connector;
 	int ret;
 
 	ret = hdmi->phy.ops->read_hpd(hdmi->rk_hdmi);
+	if (!ret) {
+		if (conn->bridge)
+			ret = rockchip_bridge_detect(conn->bridge);
+	}
+
 	if (ret || state->force_output) {
 		if (!hdmi->id)
 			conn_state->output_if |= VOP_OUTPUT_IF_HDMI0;
@@ -944,24 +1212,15 @@ int dw_hdmi_detect_hotplug(struct dw_hdmi_qp *hdmi,
 	return ret;
 }
 
-int rockchip_dw_hdmi_qp_pre_init(struct display_state *state)
+int rockchip_dw_hdmi_qp_init(struct rockchip_connector *conn, struct display_state *state)
 {
 	struct connector_state *conn_state = &state->conn_state;
-
-	conn_state->type = DRM_MODE_CONNECTOR_HDMIA;
-
-	return 0;
-}
-
-int rockchip_dw_hdmi_qp_init(struct display_state *state)
-{
-	struct connector_state *conn_state = &state->conn_state;
-	const struct rockchip_connector *connector = conn_state->connector;
-	const struct dw_hdmi_plat_data *pdata = connector->data;
-	void *rk_hdmi = dev_get_priv(conn_state->dev);
+	const struct dw_hdmi_plat_data *pdata =
+		(const struct dw_hdmi_plat_data *)dev_get_driver_data(conn->dev);
+	void *rk_hdmi = dev_get_priv(conn->dev);
 	struct dw_hdmi_qp *hdmi;
 	struct drm_display_mode *mode_buf;
-	ofnode hdmi_node = conn_state->node;
+	ofnode hdmi_node = conn->dev->node;
 	struct device_node *ddc_node;
 
 	hdmi = malloc(sizeof(struct dw_hdmi_qp));
@@ -981,7 +1240,7 @@ int rockchip_dw_hdmi_qp_init(struct display_state *state)
 
 	memset(mode_buf, 0, MODE_LEN * sizeof(struct drm_display_mode));
 
-	hdmi->regs = dev_read_addr_ptr(conn_state->dev);
+	hdmi->regs = dev_read_addr_ptr(conn->dev);
 
 	ddc_node = of_parse_phandle(ofnode_to_np(hdmi_node), "ddc-i2c-bus", 0);
 	if (ddc_node) {
@@ -1014,22 +1273,21 @@ int rockchip_dw_hdmi_qp_init(struct display_state *state)
 	hdmi->plat_data = pdata;
 	hdmi->edid_data.mode_buf = mode_buf;
 
-	conn_state->private = hdmi;
+	conn->data = hdmi;
 
 	dw_hdmi_detect_phy(hdmi);
 	hdmi_writel(hdmi, 0, MAINUNIT_0_INT_MASK_N);
 	hdmi_writel(hdmi, 0, MAINUNIT_1_INT_MASK_N);
 	hdmi_writel(hdmi, 428571429, TIMER_BASE_CONFIG0);
 
-	dw_hdmi_qp_set_iomux(hdmi->rk_hdmi);
+	dw_hdmi_qp_io_path_init(hdmi->rk_hdmi);
 
 	return 0;
 }
 
-void rockchip_dw_hdmi_qp_deinit(struct display_state *state)
+void rockchip_dw_hdmi_qp_deinit(struct rockchip_connector *conn, struct display_state *state)
 {
-	struct connector_state *conn_state = &state->conn_state;
-	struct dw_hdmi_qp *hdmi = conn_state->private;
+	struct dw_hdmi_qp *hdmi = conn->data;
 
 	if (hdmi->i2c)
 		free(hdmi->i2c);
@@ -1039,91 +1297,17 @@ void rockchip_dw_hdmi_qp_deinit(struct display_state *state)
 		free(hdmi);
 }
 
-int rockchip_dw_hdmi_qp_prepare(struct display_state *state)
-{
-	return 0;
-}
-
-static void dw_hdmi_disable(struct dw_hdmi_qp *hdmi, struct display_state *state)
-{
-	if (hdmi->phy.enabled) {
-		hdmi->phy.ops->disable(hdmi->rk_hdmi, state);
-		hdmi->phy.enabled = false;
-	}
-}
-
-int rockchip_dw_hdmi_qp_enable(struct display_state *state)
+static void rockchip_dw_hdmi_qp_config_output(struct rockchip_connector *conn,
+					      struct display_state *state)
 {
 	struct connector_state *conn_state = &state->conn_state;
 	struct drm_display_mode *mode = &conn_state->mode;
-	struct dw_hdmi_qp *hdmi = conn_state->private;
-
-	if (!hdmi)
-		return -EFAULT;
-
-	/* Store the display mode for plugin/DKMS poweron events */
-	memcpy(&hdmi->previous_mode, mode, sizeof(hdmi->previous_mode));
-
-	dw_hdmi_setup(hdmi, mode, state);
-
-	return 0;
-}
-
-int rockchip_dw_hdmi_qp_disable(struct display_state *state)
-{
-	struct connector_state *conn_state = &state->conn_state;
-	struct dw_hdmi_qp *hdmi = conn_state->private;
-
-	dw_hdmi_disable(hdmi, state);
-	return 0;
-}
-
-int rockchip_dw_hdmi_qp_get_timing(struct display_state *state)
-{
-	int ret, i;
-	struct connector_state *conn_state = &state->conn_state;
-	struct drm_display_mode *mode = &conn_state->mode;
-	struct dw_hdmi_qp *hdmi = conn_state->private;
-	struct edid *edid = (struct edid *)conn_state->edid;
+	struct dw_hdmi_qp *hdmi = conn->data;
 	unsigned int bus_format;
 	unsigned long enc_out_encoding;
 	struct overscan *overscan = &conn_state->overscan;
-	const u8 def_modes_vic[6] = {4, 16, 2, 17, 31, 19};
 
-	if (!hdmi)
-		return -EFAULT;
-
-	ret = drm_do_get_edid(&hdmi->adap, conn_state->edid);
-	if (!ret) {
-		hdmi->sink_is_hdmi =
-			drm_detect_hdmi_monitor(edid);
-		hdmi->sink_has_audio = drm_detect_monitor_audio(edid);
-		ret = drm_add_edid_modes(&hdmi->edid_data, conn_state->edid);
-	}
-	if (ret < 0) {
-		hdmi->sink_is_hdmi = true;
-		hdmi->sink_has_audio = true;
-		do_cea_modes(&hdmi->edid_data, def_modes_vic,
-			     sizeof(def_modes_vic));
-		hdmi->edid_data.preferred_mode = &hdmi->edid_data.mode_buf[0];
-		printf("failed to get edid\n");
-	}
-	drm_rk_filter_whitelist(&hdmi->edid_data);
-	if (hdmi->phy.ops->mode_valid)
-		hdmi->phy.ops->mode_valid(hdmi->rk_hdmi, state);
-	drm_mode_max_resolution_filter(&hdmi->edid_data,
-				       &state->crtc_state.max_output);
-	if (!drm_mode_prune_invalid(&hdmi->edid_data)) {
-		printf("can't find valid hdmi mode\n");
-		return -EINVAL;
-	}
-
-	for (i = 0; i < hdmi->edid_data.modes; i++)
-		hdmi->edid_data.mode_buf[i].vrefresh =
-			drm_mode_vrefresh(&hdmi->edid_data.mode_buf[i]);
-
-	drm_mode_sort(&hdmi->edid_data);
-	dw_hdmi_qp_selete_output(&hdmi->edid_data, conn_state, &bus_format,
+	dw_hdmi_qp_select_output(&hdmi->edid_data, conn, &bus_format,
 				 overscan, hdmi->dev_type,
 				 hdmi->output_bus_format_rgb, hdmi->rk_hdmi,
 				 state);
@@ -1137,15 +1321,17 @@ int rockchip_dw_hdmi_qp_get_timing(struct display_state *state)
 	hdmi->hdmi_data.enc_out_bus_format = bus_format;
 
 	switch (bus_format) {
-	case MEDIA_BUS_FMT_UYVY10_1X20:
-		conn_state->bus_format = MEDIA_BUS_FMT_YUV10_1X30;
+	case MEDIA_BUS_FMT_YUYV10_1X20:
+		conn_state->bus_format = MEDIA_BUS_FMT_YUYV10_1X20;
 		hdmi->hdmi_data.enc_in_bus_format =
-			MEDIA_BUS_FMT_YUV10_1X30;
+			MEDIA_BUS_FMT_YUYV10_1X20;
+		conn_state->output_mode = ROCKCHIP_OUT_MODE_YUV422;
 		break;
-	case MEDIA_BUS_FMT_UYVY8_1X16:
-		conn_state->bus_format = MEDIA_BUS_FMT_YUV8_1X24;
+	case MEDIA_BUS_FMT_YUYV8_1X16:
+		conn_state->bus_format = MEDIA_BUS_FMT_YUYV8_1X16;
 		hdmi->hdmi_data.enc_in_bus_format =
-			MEDIA_BUS_FMT_YUV8_1X24;
+			MEDIA_BUS_FMT_YUYV8_1X16;
+		conn_state->output_mode = ROCKCHIP_OUT_MODE_YUV422;
 		break;
 	case MEDIA_BUS_FMT_UYYVYY8_0_5X24:
 	case MEDIA_BUS_FMT_UYYVYY10_0_5X30:
@@ -1161,23 +1347,175 @@ int rockchip_dw_hdmi_qp_get_timing(struct display_state *state)
 		enc_out_encoding = V4L2_YCBCR_ENC_709;
 
 	if (enc_out_encoding == V4L2_YCBCR_ENC_BT2020)
-		conn_state->color_space = V4L2_COLORSPACE_BT2020;
+		conn_state->color_encoding = DRM_COLOR_YCBCR_BT2020;
 	else if (bus_format == MEDIA_BUS_FMT_RGB888_1X24 ||
 		 bus_format == MEDIA_BUS_FMT_RGB101010_1X30)
-		conn_state->color_space = V4L2_COLORSPACE_DEFAULT;
+		conn_state->color_encoding = DRM_COLOR_YCBCR_BT709;
 	else if (enc_out_encoding == V4L2_YCBCR_ENC_709)
-		conn_state->color_space = V4L2_COLORSPACE_REC709;
+		conn_state->color_encoding = DRM_COLOR_YCBCR_BT709;
 	else
-		conn_state->color_space = V4L2_COLORSPACE_SMPTE170M;
+		conn_state->color_encoding = DRM_COLOR_YCBCR_BT601;
+
+	if (bus_format == MEDIA_BUS_FMT_RGB888_1X24 ||
+	    bus_format == MEDIA_BUS_FMT_RGB101010_1X30)
+		conn_state->color_range = hdmi->hdmi_data.quant_range ==
+					  HDMI_QUANTIZATION_RANGE_LIMITED ?
+					  DRM_COLOR_YCBCR_LIMITED_RANGE :
+					  DRM_COLOR_YCBCR_FULL_RANGE;
+	else
+		conn_state->color_range = hdmi->hdmi_data.quant_range ==
+					  HDMI_QUANTIZATION_RANGE_FULL ?
+					  DRM_COLOR_YCBCR_FULL_RANGE :
+					  DRM_COLOR_YCBCR_LIMITED_RANGE;
+}
+
+int rockchip_dw_hdmi_qp_prepare(struct rockchip_connector *conn, struct display_state *state)
+{
+	struct connector_state *conn_state = &state->conn_state;
+	struct drm_display_mode *mode = &conn_state->mode;
+	struct dw_hdmi_qp *hdmi = conn->data;
+
+	if (!hdmi->edid_data.preferred_mode && conn->bridge) {
+		drm_add_hdmi_modes(&hdmi->edid_data, mode);
+		drm_mode_sort(&hdmi->edid_data);
+		hdmi->sink_is_hdmi = true;
+		hdmi->sink_has_audio = true;
+		rockchip_dw_hdmi_qp_config_output(conn, state);
+	}
 
 	return 0;
 }
 
-int rockchip_dw_hdmi_qp_detect(struct display_state *state)
+int rockchip_dw_hdmi_qp_check(struct rockchip_connector *conn, struct display_state *state)
+{
+	struct crtc_state *cstate = &state->crtc_state;
+	struct rockchip_crtc *crtc = cstate->crtc;
+	struct dw_hdmi_qp *hdmi = conn->data;
+
+	/* clear hdmi uboot logo on flag */
+	if (crtc->splice_mode && cstate->crtc_id == 1)
+		hdmi_writel(hdmi, 0, I2CM_INTERFACE_CONTROL0);
+
+	return 0;
+}
+
+static void dw_hdmi_disable(struct rockchip_connector *conn, struct dw_hdmi_qp *hdmi,
+			    struct display_state *state)
+{
+	if (hdmi->phy.enabled) {
+		hdmi->phy.ops->disable(conn, hdmi->rk_hdmi, state);
+		hdmi->phy.enabled = false;
+	}
+}
+
+int rockchip_dw_hdmi_qp_enable(struct rockchip_connector *conn, struct display_state *state)
+{
+	struct connector_state *conn_state = &state->conn_state;
+	struct drm_display_mode *mode = &conn_state->mode;
+	struct dw_hdmi_qp *hdmi = conn->data;
+
+	if (!hdmi)
+		return -EFAULT;
+
+	/* Store the display mode for plugin/DKMS poweron events */
+	memcpy(&hdmi->previous_mode, mode, sizeof(hdmi->previous_mode));
+
+	dw_hdmi_setup(hdmi, conn, mode, state);
+
+	return 0;
+}
+
+int rockchip_dw_hdmi_qp_disable(struct rockchip_connector *conn, struct display_state *state)
+{
+	struct dw_hdmi_qp *hdmi = conn->data;
+
+	dw_hdmi_disable(conn, hdmi, state);
+	return 0;
+}
+
+static void rockchip_dw_hdmi_qp_mode_valid(struct dw_hdmi_qp *hdmi)
+{
+	struct hdmi_edid_data *edid_data = &hdmi->edid_data;
+	int i;
+	bool enable_gpio = dw_hdmi_qp_check_enable_gpio(hdmi->rk_hdmi);
+
+	for (i = 0; i < edid_data->modes; i++) {
+		if (edid_data->mode_buf[i].invalid)
+			continue;
+
+		if (edid_data->mode_buf[i].clock <= 25000)
+			edid_data->mode_buf[i].invalid = true;
+
+		if (edid_data->mode_buf[i].clock > 600000 && !enable_gpio)
+			edid_data->mode_buf[i].invalid = true;
+	}
+}
+
+static int _rockchip_dw_hdmi_qp_get_timing(struct rockchip_connector *conn,
+					   struct display_state *state, int edid_status)
+{
+	int i;
+	struct connector_state *conn_state = &state->conn_state;
+	struct dw_hdmi_qp *hdmi = conn->data;
+	struct edid *edid = (struct edid *)conn_state->edid;
+	const u8 def_modes_vic[6] = {4, 16, 2, 17, 31, 19};
+
+	if (!hdmi)
+		return -EFAULT;
+
+	if (!edid_status) {
+		hdmi->sink_is_hdmi =
+			drm_detect_hdmi_monitor(edid);
+		hdmi->sink_has_audio = drm_detect_monitor_audio(edid);
+		edid_status = drm_add_edid_modes(&hdmi->edid_data, conn_state->edid);
+	}
+	if (edid_status < 0) {
+		hdmi->sink_is_hdmi = true;
+		hdmi->sink_has_audio = true;
+		do_cea_modes(&hdmi->edid_data, def_modes_vic,
+			     sizeof(def_modes_vic));
+		hdmi->edid_data.preferred_mode = &hdmi->edid_data.mode_buf[0];
+		printf("failed to get edid\n");
+	}
+	drm_rk_filter_whitelist(&hdmi->edid_data);
+	rockchip_dw_hdmi_qp_mode_valid(hdmi);
+	drm_mode_max_resolution_filter(&hdmi->edid_data,
+				       &state->crtc_state.max_output);
+	if (!drm_mode_prune_invalid(&hdmi->edid_data)) {
+		printf("can't find valid hdmi mode\n");
+		return -EINVAL;
+	}
+
+	for (i = 0; i < hdmi->edid_data.modes; i++)
+		hdmi->edid_data.mode_buf[i].vrefresh =
+			drm_mode_vrefresh(&hdmi->edid_data.mode_buf[i]);
+
+	drm_mode_sort(&hdmi->edid_data);
+
+	rockchip_dw_hdmi_qp_config_output(conn, state);
+
+	return 0;
+}
+
+int rockchip_dw_hdmi_qp_get_timing(struct rockchip_connector *conn, struct display_state *state)
+{
+	struct connector_state *conn_state = &state->conn_state;
+	struct dw_hdmi_qp *hdmi = conn->data;
+	int ret;
+
+	ret = drm_do_get_edid(&hdmi->adap, conn_state->edid);
+
+	if (conn_state->secondary)
+		_rockchip_dw_hdmi_qp_get_timing(conn_state->secondary, state, ret);
+
+	return _rockchip_dw_hdmi_qp_get_timing(conn, state, ret);
+}
+
+
+int rockchip_dw_hdmi_qp_detect(struct rockchip_connector *conn, struct display_state *state)
 {
 	int ret;
-	struct connector_state *conn_state = &state->conn_state;
-	struct dw_hdmi_qp *hdmi = conn_state->private;
+	struct dw_hdmi_qp *hdmi = conn->data;
 
 	if (!hdmi)
 		return -EFAULT;
@@ -1187,11 +1525,11 @@ int rockchip_dw_hdmi_qp_detect(struct display_state *state)
 	return ret;
 }
 
-int rockchip_dw_hdmi_qp_get_edid(struct display_state *state)
+int rockchip_dw_hdmi_qp_get_edid(struct rockchip_connector *conn, struct display_state *state)
 {
 	int ret;
 	struct connector_state *conn_state = &state->conn_state;
-	struct dw_hdmi_qp *hdmi = conn_state->private;
+	struct dw_hdmi_qp *hdmi = conn->data;
 
 	ret = drm_do_get_edid(&hdmi->adap, conn_state->edid);
 

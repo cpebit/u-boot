@@ -14,6 +14,7 @@
 #include <clk.h>
 #include <dm/device.h>
 #include <dm/of_access.h>
+#include <dm/lists.h>
 #include <dm/read.h>
 #include <generic-phy.h>
 #include <linux/bitfield.h>
@@ -216,7 +217,12 @@ struct dw_dp_sdp {
 	unsigned long flags;
 };
 
+struct dw_dp_chip_data {
+	int pixel_mode;
+};
+
 struct dw_dp {
+	struct rockchip_connector connector;
 	struct udevice *dev;
 	struct regmap *regmap;
 	struct phy phy;
@@ -228,7 +234,9 @@ struct dw_dp {
 	struct dw_dp_link link;
 	struct dw_dp_video video;
 
+	bool force_hpd;
 	bool force_output;
+	u32 max_link_rate;
 };
 
 enum {
@@ -439,7 +447,7 @@ static bool dw_dp_bandwidth_ok(struct dw_dp *dp,
 
 static void dw_dp_hpd_init(struct dw_dp *dp)
 {
-	if (dm_gpio_is_valid(&dp->hpd_gpio)) {
+	if (dm_gpio_is_valid(&dp->hpd_gpio) || dp->force_hpd) {
 		regmap_update_bits(dp->regmap, DPTX_CCTL, FORCE_HPD,
 				   FIELD_PREP(FORCE_HPD, 1));
 		return;
@@ -547,6 +555,7 @@ static int dw_dp_link_probe(struct dw_dp *dp)
 	u8 dpcd;
 	int ret;
 
+	drm_dp_dpcd_writeb(&dp->aux, DP_MSTM_CTRL, 0);
 	ret = drm_dp_read_dpcd_caps(&dp->aux, link->dpcd);
 	if (ret < 0)
 		return ret;
@@ -560,7 +569,8 @@ static int dw_dp_link_probe(struct dw_dp *dp)
 		!!(dpcd & DP_VSC_SDP_EXT_FOR_COLORIMETRY_SUPPORTED);
 
 	link->revision = link->dpcd[DP_DPCD_REV];
-	link->rate = drm_dp_max_link_rate(link->dpcd);
+	link->rate = min_t(u32, min(dp->max_link_rate, dp->phy.attrs.max_link_rate * 100),
+			   drm_dp_max_link_rate(link->dpcd));
 	link->lanes = min_t(u8, dp->phy.attrs.bus_width,
 			    drm_dp_max_lane_count(link->dpcd));
 
@@ -1394,37 +1404,40 @@ static bool dw_dp_detect(struct dw_dp *dp)
 	if (dm_gpio_is_valid(&dp->hpd_gpio))
 		return dm_gpio_get_value(&dp->hpd_gpio);
 
-	regmap_read(dp->regmap, DPTX_GENERAL_INTERRUPT, &value);
-	if (value & HPD_EVENT) {
-		regmap_read(dp->regmap, DPTX_HPD_STATUS, &value);
-		if ((value & HPD_HOT_PLUG) &&
-		    (FIELD_GET(HPD_STATE, value) == SOURCE_STATE_PLUG)) {
-			regmap_write(dp->regmap, DPTX_HPD_STATUS, HPD_HOT_PLUG);
-			return true;
-		}
+	regmap_read(dp->regmap, DPTX_HPD_STATUS, &value);
+	if (FIELD_GET(HPD_STATE, value) == SOURCE_STATE_PLUG) {
+		regmap_write(dp->regmap, DPTX_HPD_STATUS, HPD_HOT_PLUG);
+		return true;
 	}
 
 	return false;
 }
 
-static int dw_dp_connector_pre_init(struct display_state *state)
+static struct dw_dp *connector_to_dw_dp(struct rockchip_connector *conn)
 {
-	struct connector_state *conn_state = &state->conn_state;
+	struct dw_dp *dp;
 
-	conn_state->type = DRM_MODE_CONNECTOR_DisplayPort;
+	if (dev_get_priv(conn->dev))
+		dp = dev_get_priv(conn->dev);
+	else
+		dp = dev_get_priv(conn->dev->parent);
 
-	return 0;
+	return dp;
 }
 
-static int dw_dp_connector_init(struct display_state *state)
+static int dw_dp_connector_init(struct rockchip_connector *conn, struct display_state *state)
 {
 	struct connector_state *conn_state = &state->conn_state;
-	struct dw_dp *dp = dev_get_priv(conn_state->dev);
+	struct dw_dp *dp = connector_to_dw_dp(conn);
 	int ret;
 
+	if (dev_get_priv(conn->dev))
+		dp  = dev_get_priv(conn->dev);
+	else
+		dp = dev_get_priv(conn->dev->parent);
 	conn_state->output_if |= dp->id ? VOP_OUTPUT_IF_DP1 : VOP_OUTPUT_IF_DP0;
 	conn_state->output_mode = ROCKCHIP_OUT_MODE_AAAA;
-	conn_state->color_space = V4L2_COLORSPACE_DEFAULT;
+	conn_state->color_encoding = DRM_COLOR_YCBCR_BT709;
 
 	clk_set_defaults(dp->dev);
 
@@ -1440,27 +1453,60 @@ static int dw_dp_connector_init(struct display_state *state)
 	return ret;
 }
 
-static int dw_dp_connector_get_edid(struct display_state *state)
+static int dw_dp_connector_get_edid(struct rockchip_connector *conn, struct display_state *state)
 {
 	int ret;
 	struct connector_state *conn_state = &state->conn_state;
-	struct dw_dp *dp = dev_get_priv(conn_state->dev);
+	struct dw_dp *dp = connector_to_dw_dp(conn);
 
 	ret = drm_do_get_edid(&dp->aux.ddc, conn_state->edid);
 
 	return ret;
 }
 
-static int dw_dp_connector_enable(struct display_state *state)
+static int dw_dp_get_output_fmts_index(u32 bus_format)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(possible_output_fmts); i++) {
+		const struct dw_dp_output_format *fmt = &possible_output_fmts[i];
+
+		if (fmt->bus_format == bus_format)
+			break;
+	}
+
+	if (i == ARRAY_SIZE(possible_output_fmts))
+		return 1;
+
+	return i;
+}
+
+static int dw_dp_connector_prepare(struct rockchip_connector *conn, struct display_state *state)
+{
+	struct connector_state *conn_state = &state->conn_state;
+	struct dw_dp *dp = connector_to_dw_dp(conn);
+	struct dw_dp_video *video = &dp->video;
+	int bus_fmt;
+
+	bus_fmt = dw_dp_get_output_fmts_index(conn_state->bus_format);
+	video->video_mapping = possible_output_fmts[bus_fmt].video_mapping;
+	video->color_format = possible_output_fmts[bus_fmt].color_format;
+	video->bus_format = possible_output_fmts[bus_fmt].bus_format;
+	video->bpc = possible_output_fmts[bus_fmt].bpc;
+	video->bpp = possible_output_fmts[bus_fmt].bpp;
+
+	return 0;
+}
+
+static int dw_dp_connector_enable(struct rockchip_connector *conn, struct display_state *state)
 {
 	struct connector_state *conn_state = &state->conn_state;
 	struct drm_display_mode *mode = &conn_state->mode;
-	struct dw_dp *dp = dev_get_priv(conn_state->dev);
+	struct dw_dp *dp = connector_to_dw_dp(conn);
 	struct dw_dp_video *video = &dp->video;
 	int ret;
 
 	memcpy(&video->mode, mode, sizeof(video->mode));
-	video->pixel_mode = DPTX_MP_QUAD_PIXEL;
 
 	if (dp->force_output) {
 		ret = dw_dp_set_phy_default_config(dp);
@@ -1483,20 +1529,19 @@ static int dw_dp_connector_enable(struct display_state *state)
 	return 0;
 }
 
-static int dw_dp_connector_disable(struct display_state *state)
+static int dw_dp_connector_disable(struct rockchip_connector *conn, struct display_state *state)
 {
 	/* TODO */
 
 	return 0;
 }
 
-static int dw_dp_connector_detect(struct display_state *state)
+static int dw_dp_connector_detect(struct rockchip_connector *conn, struct display_state *state)
 {
-	struct connector_state *conn_state = &state->conn_state;
-	struct dw_dp *dp = dev_get_priv(conn_state->dev);
-	int status, tries;
+	struct dw_dp *dp = connector_to_dw_dp(conn);
+	int status, tries, ret;
 
-	for (tries = 0; tries < 100; tries++) {
+	for (tries = 0; tries < 200; tries++) {
 		status = dw_dp_detect(dp);
 		if (status)
 			break;
@@ -1508,6 +1553,12 @@ static int dw_dp_connector_detect(struct display_state *state)
 
 	if (!status && !dp->force_output)
 		generic_phy_power_off(&dp->phy);
+
+	if (status && !dp->force_output) {
+		ret = dw_dp_link_probe(dp);
+		if (ret)
+			printf("failed to probe DP link: %d\n", ret);
+	}
 
 	return status;
 }
@@ -1573,32 +1624,15 @@ static u32 dw_dp_get_output_bus_fmts(struct dw_dp *dp, struct hdmi_edid_data *ed
 	return i;
 }
 
-static int dw_dp_get_force_output_fmts(struct display_state *state)
-{
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(possible_output_fmts); i++) {
-		const struct dw_dp_output_format *fmt = &possible_output_fmts[i];
-
-		if (fmt->bus_format == state->force_bus_format)
-			break;
-	}
-
-	if (i == ARRAY_SIZE(possible_output_fmts))
-		return 1;
-
-	return i;
-}
-
-static int dw_dp_connector_get_timing(struct display_state *state)
+static int dw_dp_connector_get_timing(struct rockchip_connector *conn, struct display_state *state)
 {
 	int ret, i;
 	struct connector_state *conn_state = &state->conn_state;
-	struct dw_dp *dp = dev_get_priv(conn_state->dev);
-	struct dw_dp_video *video = &dp->video;
+	struct dw_dp *dp = connector_to_dw_dp(conn);
 	struct drm_display_mode *mode = &conn_state->mode;
 	struct hdmi_edid_data edid_data;
 	struct drm_display_mode *mode_buf;
+	struct vop_rect rect;
 	u32 bus_fmt;
 
 	mode_buf = malloc(MODE_LEN * sizeof(struct drm_display_mode));
@@ -1619,20 +1653,20 @@ static int dw_dp_connector_get_timing(struct display_state *state)
 			goto err;
 		}
 
-		ret = dw_dp_link_probe(dp);
-		if (ret) {
-			printf("failed to probe DP link: %d\n", ret);
-			ret = -EINVAL;
-			goto err;
+		//drm_rk_filter_whitelist(&edid_data);
+		if (state->conn_state.secondary) {
+			rect.width = state->crtc_state.max_output.width / 2;
+			rect.height = state->crtc_state.max_output.height / 2;
+		} else {
+			rect.width = state->crtc_state.max_output.width;
+			rect.height = state->crtc_state.max_output.height;
 		}
 
-		drm_rk_filter_whitelist(&edid_data);
-		drm_mode_max_resolution_filter(&edid_data,
-					       &state->crtc_state.max_output);
+		drm_mode_max_resolution_filter(&edid_data, &rect);
 		dw_dp_mode_valid(dp, &edid_data);
 
 		if (!drm_mode_prune_invalid(&edid_data)) {
-			printf("can't find valid hdmi mode\n");
+			printf("can't find valid dp mode\n");
 			ret = -EINVAL;
 			goto err;
 		}
@@ -1646,17 +1680,13 @@ static int dw_dp_connector_get_timing(struct display_state *state)
 	}
 
 	if (state->force_output)
-		bus_fmt = dw_dp_get_force_output_fmts(state);
+		bus_fmt = dw_dp_get_output_fmts_index(state->force_bus_format);
 	else
 		bus_fmt = dw_dp_get_output_bus_fmts(dp, &edid_data);
 
-	video->video_mapping = possible_output_fmts[bus_fmt].video_mapping;
-	video->color_format = possible_output_fmts[bus_fmt].color_format;
-	video->bus_format = possible_output_fmts[bus_fmt].bus_format;
-	video->bpc = possible_output_fmts[bus_fmt].bpc;
-	video->bpp = possible_output_fmts[bus_fmt].bpp;
+	conn_state->bus_format = possible_output_fmts[bus_fmt].bus_format;
 
-	switch (video->color_format) {
+	switch (possible_output_fmts[bus_fmt].color_format) {
 	case DRM_COLOR_FORMAT_YCRCB420:
 		conn_state->output_mode = ROCKCHIP_OUT_MODE_YUV420;
 		break;
@@ -1670,7 +1700,6 @@ static int dw_dp_connector_get_timing(struct display_state *state)
 		break;
 	}
 
-	conn_state->bus_format = video->bus_format;
 err:
 	free(mode_buf);
 
@@ -1678,9 +1707,9 @@ err:
 }
 
 static const struct rockchip_connector_funcs dw_dp_connector_funcs = {
-	.pre_init = dw_dp_connector_pre_init,
 	.init = dw_dp_connector_init,
 	.get_edid = dw_dp_connector_get_edid,
+	.prepare = dw_dp_connector_prepare,
 	.enable = dw_dp_connector_enable,
 	.disable = dw_dp_connector_disable,
 	.detect = dw_dp_connector_detect,
@@ -1697,9 +1726,54 @@ static int dw_dp_ddc_init(struct dw_dp *dp)
 	return 0;
 }
 
+static u32 dw_dp_parse_link_frequencies(struct dw_dp *dp)
+{
+	struct udevice *dev = dp->dev;
+	const struct device_node *endpoint;
+	u64 frequency = 0;
+
+	endpoint = rockchip_of_graph_get_endpoint_by_regs(dev->node, 1, 0);
+	if (!endpoint)
+		return 0;
+
+	if (of_property_read_u64(endpoint, "link-frequencies", &frequency) < 0)
+		return 0;
+
+	if (!frequency)
+		return 0;
+
+	do_div(frequency, 10 * 1000);	/* symbol rate kbytes */
+
+	switch (frequency) {
+	case 162000:
+	case 270000:
+	case 540000:
+	case 810000:
+		break;
+	default:
+		dev_err(dev, "invalid link frequency value: %llu\n", frequency);
+		return 0;
+	}
+
+	return frequency;
+}
+
+static int dw_dp_parse_dt(struct dw_dp *dp)
+{
+	dp->force_hpd = dev_read_bool(dp->dev, "force-hpd");
+
+	dp->max_link_rate = dw_dp_parse_link_frequencies(dp);
+	if (!dp->max_link_rate)
+		dp->max_link_rate = 810000;
+
+	return 0;
+}
+
 static int dw_dp_probe(struct udevice *dev)
 {
 	struct dw_dp *dp = dev_get_priv(dev);
+	const struct dw_dp_chip_data *pdata =
+		(const struct dw_dp_chip_data *)dev_get_driver_data(dev);
 	int ret;
 
 	ret = regmap_init_mem(dev, &dp->regmap);
@@ -1709,6 +1783,8 @@ static int dw_dp_probe(struct udevice *dev)
 	dp->id = of_alias_get_id(ofnode_to_np(dev->node), "dp");
 	if (dp->id < 0)
 		dp->id = 0;
+
+	dp->video.pixel_mode = pdata->pixel_mode;
 
 	ret = reset_get_by_index(dev, 0, &dp->reset);
 	if (ret) {
@@ -1727,21 +1803,86 @@ static int dw_dp_probe(struct udevice *dev)
 
 	dp->dev = dev;
 
+	ret = dw_dp_parse_dt(dp);
+	if (ret) {
+		dev_err(dev, "failed to parse DT\n");
+		return ret;
+	}
+
 	dw_dp_ddc_init(dp);
+
+	rockchip_connector_bind(&dp->connector, dev, dp->id, &dw_dp_connector_funcs, NULL,
+				DRM_MODE_CONNECTOR_DisplayPort);
 
 	return 0;
 }
 
-static const struct rockchip_connector rk3588_dp_driver_data = {
-	.funcs = &dw_dp_connector_funcs,
+static int dw_dp_bind(struct udevice *parent)
+{
+	struct udevice *child;
+	ofnode subnode;
+	const char *node_name;
+	int ret;
+
+	dev_for_each_subnode(subnode, parent) {
+		if (!ofnode_valid(subnode)) {
+			printf("%s: no subnode for %s\n", __func__, parent->name);
+			return -ENXIO;
+		}
+
+		node_name = ofnode_get_name(subnode);
+		debug("%s: subnode %s\n", __func__, node_name);
+
+		if (!strcasecmp(node_name, "dp0")) {
+			printf("%s zyb enter\n", __func__);
+			ret = device_bind_driver_to_node(parent,
+							 "dw_dp_port0",
+							 node_name, subnode, &child);
+			if (ret) {
+				printf("%s: '%s' cannot bind its driver\n",
+				       __func__, node_name);
+				return ret;
+			}
+		}
+	}
+
+	return 0;
+}
+
+static int dw_dp_port_probe(struct udevice *dev)
+{
+	struct dw_dp *dp = dev_get_priv(dev->parent);
+
+	rockchip_connector_bind(&dp->connector, dev, dp->id, &dw_dp_connector_funcs, NULL,
+				DRM_MODE_CONNECTOR_DisplayPort);
+
+	return 0;
+}
+
+static const struct dw_dp_chip_data rk3588_dp = {
+	.pixel_mode = DPTX_MP_QUAD_PIXEL,
+};
+
+static const struct dw_dp_chip_data rk3576_dp = {
+	.pixel_mode = DPTX_MP_DUAL_PIXEL,
 };
 
 static const struct udevice_id dw_dp_ids[] = {
 	{
+		.compatible = "rockchip,rk3576-dp",
+		.data = (ulong)&rk3576_dp,
+	},
+	{
 		.compatible = "rockchip,rk3588-dp",
-		.data = (ulong)&rk3588_dp_driver_data
+		.data = (ulong)&rk3588_dp,
 	},
 	{}
+};
+
+U_BOOT_DRIVER(dw_dp_port) = {
+	.name		= "dw_dp_port0",
+	.id		= UCLASS_DISPLAY,
+	.probe		= dw_dp_port_probe,
 };
 
 U_BOOT_DRIVER(dw_dp) = {
@@ -1749,6 +1890,7 @@ U_BOOT_DRIVER(dw_dp) = {
 	.id = UCLASS_DISPLAY,
 	.of_match = dw_dp_ids,
 	.probe = dw_dp_probe,
+	.bind = dw_dp_bind,
 	.priv_auto_alloc_size = sizeof(struct dw_dp),
 };
 
