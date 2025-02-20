@@ -10,7 +10,6 @@
 #include <sysmem.h>
 #include <asm/arch/fit.h>
 #include <asm/arch/resource_img.h>
-#include <linux/string.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -143,12 +142,14 @@ static void *fit_get_blob(struct blk_desc *dev_desc,
 {
 	__maybe_unused int conf_noffset;
 	disk_partition_t part;
-	char part_name[10] = PART_BOOT;
+	char *part_name;
 	void *fit, *fdt;
 	int blk_num;
 
-    char *bootpart = env_get("bootpart");
-    strcat(part_name, bootpart);
+	if (rockchip_get_boot_mode() == BOOT_MODE_RECOVERY)
+		part_name = PART_RECOVERY;
+	else
+		part_name = PART_BOOT;
 
 	if (part_get_info_by_name(dev_desc, part_name, &part) < 0) {
 		FIT_I("No %s partition\n", part_name);
