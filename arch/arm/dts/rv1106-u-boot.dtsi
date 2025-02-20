@@ -212,3 +212,8 @@
 	u-boot,dm-pre-reloc;
 	status = "okay";
 };
+
+&otp {
+	u-boot,dm-spl;
+	status = "okay";
+};
