@@ -25,6 +25,10 @@ static const struct virq_reg rk805_irqs[] = {
 		.mask = RK805_IRQ_PWRON_RISE_MSK,
 		.reg_offset = 0,
 	},
+	[RK8XX_IRQ_RTC_ALARM] = {
+		.mask = RK805_IRQ_RTC_ALARM_MSK,
+		.reg_offset = 0,
+	},
 };
 
 static struct virq_chip rk805_irq_chip = {
@@ -66,6 +70,10 @@ static const struct virq_reg rk808_irqs[] = {
 		.mask = RK808_IRQ_PLUG_OUT_MSK,
 		.reg_offset = 1,
 	},
+	[RK8XX_IRQ_RTC_ALARM] = {
+		.mask = RK808_IRQ_RTC_ALARM_MSK,
+		.reg_offset = 0,
+	},
 };
 
 static struct virq_chip rk808_irq_chip = {
@@ -97,6 +105,10 @@ static const struct virq_reg rk816_irqs[] = {
 		.mask = RK816_IRQ_CHR_OK_MSK,
 		.reg_offset = 2,
 	},
+	[RK8XX_IRQ_RTC_ALARM] = {
+		.mask = RK816_IRQ_RTC_ALARM_MSK,
+		.reg_offset = 1,
+	},
 };
 
 static struct virq_chip rk816_irq_chip = {
@@ -121,6 +133,10 @@ static const struct virq_reg rk818_irqs[] = {
 	[RK8XX_IRQ_CHG_OK] = {
 		.mask = RK818_IRQ_CHR_OK_MSK,
 		.reg_offset = 1,
+	},
+	[RK8XX_IRQ_RTC_ALARM] = {
+		.mask = RK818_IRQ_RTC_ALARM_MSK,
+		.reg_offset = 0,
 	},
 };
 
@@ -153,6 +169,10 @@ static const struct virq_reg rk817_irqs[] = {
 		.mask = RK817_IRQ_PLUG_IN_MSK,
 		.reg_offset = 1,
 	},
+	[RK8XX_IRQ_RTC_ALARM] = {
+		.mask = RK817_IRQ_RTC_ALARM_MSK,
+		.reg_offset = 0,
+	},
 };
 
 static struct virq_chip rk817_irq_chip = {
@@ -171,13 +191,13 @@ static struct reg_data rk817_init_reg[] = {
 /* enable the under-voltage protection,
  * the under-voltage protection will shutdown the LDO3 and reset the PMIC
  */
-	{ RK817_BUCK4_CMIN, 0x6b, 0x6e},
+	{ RK817_BUCK4_CMIN, 0x6e, 0x6e},
 	{ RK817_PMIC_SYS_CFG1, 0x20, 0x70},
 	/* Set pmic_sleep as none function */
 	{ RK817_PMIC_SYS_CFG3, 0x00, 0x18 },
 	/* GATE pin function: gate function */
 	{ RK817_GPIO_INT_CFG, 0x00, 0x20 },
-#ifdef CONFIG_DM_CHARGE_DISPLAY
+#if CONFIG_IS_ENABLED(IRQ)
 	/* Set pmic_int active low */
 	{ RK817_GPIO_INT_CFG,  0x00, 0x02 },
 #endif
@@ -204,6 +224,8 @@ static const struct pmic_child_info pmic_children_info[] = {
 	{ .prefix = "PLDO", .driver = "rk8xx_pldo"},
 	{ .prefix = "LDO", .driver = "rk8xx_ldo"},
 	{ .prefix = "SWITCH", .driver = "rk8xx_switch"},
+	{ .prefix = "BOOST", .driver = "rk8xx_boost"},
+
 	{ },
 };
 
@@ -267,6 +289,94 @@ static int rk8xx_read(struct udevice *dev, uint reg, uint8_t *buff, int len)
 	}
 
 	return 0;
+}
+
+static void rk806_shutdown_seq(struct udevice *dev)
+{
+	struct rk8xx_priv *rk8xx = dev_get_priv(dev);
+	uint8_t value;
+	int i;
+
+	if (!rk8xx->shutdown_sequence)
+		return;
+
+	for (i = RK806_ID_DCDC1; i <= RK806_ID_DCDC10; i++) {
+		value = rk8xx->shutdown_sequence[RK806_ID_DCDC1 + i];
+		rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG0 + i, &value, 1);
+	}
+
+	for (i = RK806_ID_NLDO1; i <= RK806_ID_NLDO5; i++) {
+		value = rk8xx->shutdown_sequence[RK806_ID_NLDO1 + i];
+		rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG0 + i, &value, 1);
+	}
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG8, &value, 1);
+	value |= rk8xx->shutdown_sequence[RK806_ID_PLDO1] << 6;
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG8, &value, 1);
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG11, &value, 1);
+	value |= rk8xx->shutdown_sequence[RK806_ID_PLDO2] << 6;
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG11, &value, 1);
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG14, &value, 1);
+	value |= rk8xx->shutdown_sequence[RK806_ID_PLDO3] << 6;
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG14, &value, 1);
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG15, &value, 1);
+	value |= rk8xx->shutdown_sequence[RK806_ID_PLDO4];
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG15, &value, 1);
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG16, &value, 1);
+	value |= rk8xx->shutdown_sequence[RK806_ID_PLDO5];
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG16, &value, 1);
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG5, &value, 1);
+	value |= rk8xx->shutdown_sequence[RK806_ID_PLDO6] << 6;
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG5, &value, 1);
+}
+
+static void rk806_vb_shutdown_seq(struct udevice *dev)
+{
+	struct rk8xx_priv *rk8xx = dev_get_priv(dev);
+	uint8_t value;
+	int i;
+
+	if (!rk8xx->vb_shutdown_sequence)
+		return;
+
+	for (i = RK806_ID_DCDC1; i <= RK806_ID_DCDC10; i++) {
+		value = rk8xx->vb_shutdown_sequence[RK806_ID_DCDC1 + i];
+		rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG0 + i, &value, 1);
+	}
+
+	for (i = RK806_ID_NLDO1; i <= RK806_ID_NLDO5; i++) {
+		value = rk8xx->vb_shutdown_sequence[i];
+		rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG0 + i, &value, 1);
+	}
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG8, &value, 1);
+	value |= rk8xx->vb_shutdown_sequence[RK806_ID_PLDO1] << 6;
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG8, &value, 1);
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG11, &value, 1);
+	value |= rk8xx->vb_shutdown_sequence[RK806_ID_PLDO2] << 6;
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG11, &value, 1);
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG14, &value, 1);
+	value |= rk8xx->vb_shutdown_sequence[RK806_ID_PLDO3] << 6;
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG14, &value, 1);
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG15, &value, 1);
+	value |= rk8xx->vb_shutdown_sequence[RK806_ID_PLDO4];
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG15, &value, 1);
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG16, &value, 1);
+	value |= rk8xx->vb_shutdown_sequence[RK806_ID_PLDO5];
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG16, &value, 1);
+
+	rk8xx_read(dev, RK806_SHUTDOWN_SEQ_REG5, &value, 1);
+	value |= rk8xx->vb_shutdown_sequence[RK806_ID_PLDO6] << 6;
+	rk8xx_write(dev, RK806_SHUTDOWN_SEQ_REG5, &value, 1);
 }
 
 static int rk8xx_suspend(struct udevice *dev)
@@ -393,6 +503,7 @@ static int rk8xx_shutdown(struct udevice *dev)
 
 	switch (priv->variant) {
 	case RK806_ID:
+		rk806_shutdown_seq(dev);
 		devctrl_reg = RK806_SYS_CFG3;
 		dev_off = RK806_DEV_OFF;
 		break;
@@ -557,7 +668,7 @@ static int rk8xx_ofdata_to_platdata(struct udevice *dev)
 {
 	struct rk8xx_priv *rk8xx = dev_get_priv(dev);
 	u32 interrupt, phandle, val;
-	int ret;
+	int ret, len;
 
 	phandle = dev_read_u32_default(dev, "interrupt-parent", -ENODATA);
 	if (phandle == -ENODATA) {
@@ -600,7 +711,76 @@ static int rk8xx_ofdata_to_platdata(struct udevice *dev)
 	/* buck5 external feedback resister disable */
 	rk8xx->buck5_feedback_dis = dev_read_bool(dev, "buck5-feedback-disable");
 
+	rk8xx->pwr_ctr[0] = dev_read_u32_default(dev, "pwrctrl1_output", -1);
+	rk8xx->pwr_ctr[1] = dev_read_u32_default(dev, "pwrctrl2_output", -1);
+	rk8xx->pwr_ctr[2] = dev_read_u32_default(dev, "pwrctrl3_output", -1);
+
+	if (!dev_read_prop(dev, "shutdown-sequence", &len)) {
+		printf("can't find shutdown-sequence prop\n");
+	} else {
+		if (len / 4 != RK806_ID_END)
+			return 0;
+		rk8xx->shutdown_sequence = calloc(len, 1);
+		if (!rk8xx->shutdown_sequence) {
+			printf("can't calloc shutdown_sequence\n");
+			return 0;
+		}
+
+		if (dev_read_u32_array(dev, "shutdown-sequence",
+				       rk8xx->shutdown_sequence,
+				       RK806_ID_END)) {
+			printf("can't read shutdown_sequence\n");
+			free(rk8xx->shutdown_sequence);
+			return 0;
+		}
+	}
+
+	if (!dev_read_prop(dev, "vb-shutdown-sequence", &len)) {
+		printf("can't find vb-shutdown-sequence prop\n");
+	} else {
+		if (len / 4 != RK806_ID_END)
+			return 0;
+		rk8xx->vb_shutdown_sequence = calloc(len, 1);
+		if (!rk8xx->vb_shutdown_sequence) {
+			printf("can't calloc vb_shutdown_sequence\n");
+			return 0;
+		}
+
+		if (dev_read_u32_array(dev, "vb-shutdown-sequence",
+				       rk8xx->vb_shutdown_sequence,
+				       RK806_ID_END)) {
+			printf("can't read vb-shutdown-sequence\n");
+			free(rk8xx->vb_shutdown_sequence);
+			return 0;
+		}
+	}
+
 	return 0;
+}
+
+static void rk806_pwrctrl_output_value(struct udevice *dev,
+				       int pin,
+				       int output_value)
+{
+	u8 value;
+
+	rk8xx_read(dev, RK806_PWRCTRL_CONFIG0 + pin / 3, &value, 1);
+	if ((pin == RK806_PWRCTRL1) || (pin == RK806_PWRCTRL3)) {
+		value &= ~RK806_PWRCTR_MSK_FUN;
+		value |= RK806_PWRCTR_GPIO_FUN;
+	} else {
+		value &= ~(RK806_PWRCTR_MSK_FUN << 4);
+		value |= RK806_PWRCTR_GPIO_FUN << 4;
+	}
+	rk8xx_write(dev, RK806_PWRCTRL_CONFIG0 + pin / 3, &value, 1);
+
+	rk8xx_read(dev, RK806_PWRCTRL_GPIO, &value, 1);
+	value &= ~(RK806_PWRCTR_OUTPUT_MSK << (pin - 1));
+	if (output_value)
+		value |= (RK806_PWRCTR_OUTPUT1 << (pin - 1));
+	else
+		value |= (RK806_PWRCTR_OUTPUT0 << (pin - 1));
+	rk8xx_write(dev, RK806_PWRCTRL_GPIO, &value, 1);
 }
 
 static int rk8xx_probe(struct udevice *dev)
@@ -658,6 +838,12 @@ static int rk8xx_probe(struct udevice *dev)
 			rk8xx_write(dev, RK806_SYS_CFG1, &value, 1);
 		}
 
+		for (i = 0; i < 3; i++)
+			if (priv->pwr_ctr[i] >= 0 && priv->pwr_ctr[i] <= 1)
+				rk806_pwrctrl_output_value(dev,
+							   i + 1,
+							   priv->pwr_ctr[i]);
+
 		if (priv->rst_fun) {
 			rk8xx_read(dev, RK806_SYS_CFG3, &value, 1);
 			value &= RK806_RESET_FUN_CLR;
@@ -672,9 +858,10 @@ static int rk8xx_probe(struct udevice *dev)
 
 		if (priv->buck5_feedback_dis) {
 			rk8xx_read(dev, RK806_BUCK_RSERVE_REG3, &value, 1);
-			value &=( ~RK806_BUCK5_EX_RES_EN);
+			value &= (~RK806_BUCK5_EX_RES_EN);
 			rk8xx_write(dev, RK806_BUCK_RSERVE_REG3, &value, 1);
 		}
+		rk806_vb_shutdown_seq(dev);
 		break;
 	case RK808_ID:
 		show_variant = 0x808;	/* RK808 hardware ID is 0 */
@@ -740,6 +927,13 @@ static int rk8xx_probe(struct udevice *dev)
 				return ret;
 		}
 
+		if ((priv->rst_fun > RK8xx_RST_MODE0) &&
+		    (priv->rst_fun <= RK8xx_RST_MODE2)) {
+			rk8xx_read(dev, RK817_PMIC_SYS_CFG3, &value, 1);
+			value &=  RK8xx_RESET_FUN_CLR;
+			value |= (priv->rst_fun << 6);
+			rk8xx_write(dev, RK817_PMIC_SYS_CFG3, &value, 1);
+		}
 		/* judge whether save the PMIC_POWER_EN register */
 		if (!priv->not_save_power_en) {
 			ret = rk8xx_read(dev, RK817_POWER_EN0, &power_en0, 1);

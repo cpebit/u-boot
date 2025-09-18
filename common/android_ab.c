@@ -386,6 +386,7 @@ static int get_partition_unique_uuid(char *partition,
 				     char *guid_buf,
 				     size_t guid_buf_size)
 {
+#if CONFIG_IS_ENABLED(PARTITION_UUIDS)
 	struct blk_desc *dev_desc;
 	disk_partition_t part_info;
 
@@ -404,6 +405,10 @@ static int get_partition_unique_uuid(char *partition,
 		memcpy(guid_buf, part_info.uuid, guid_buf_size);
 
 	return 0;
+#else
+	printf("WARN: Get partition uuid requires CONFIG_PARTITION_UUIDS enabled\n");
+	return -1;
+#endif
 }
 
 static void ab_update_root_uuid(void)
@@ -472,6 +477,7 @@ void ab_update_root_partition(void)
 	/* Judge the partition device type. */
 	switch (dev_desc->if_type) {
 	case IF_TYPE_MMC:
+	case IF_TYPE_SCSI: /* scsi 0: UFS */
 		if (strstr(part_type, "ENV"))
 			snprintf(root_part_dev, 64, "root=/dev/mmcblk0p%d", part_num);
 		else if (strstr(part_type, "EFI"))
@@ -495,7 +501,8 @@ void ab_update_root_partition(void)
 		}
 		break;
 	default:
-		printf("%s: Not found part type, failed to set root part device.\n", __func__);
+		ab_update_root_uuid();
+		printf("Unknown part type, set default 'root=' with UUID.\n");
 		return;
 	}
 

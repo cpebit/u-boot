@@ -13,6 +13,7 @@
 #include <asm/arch/cpu.h>
 #include <asm/arch/hardware.h>
 #include <asm/arch/ioc_rk3588.h>
+#include <asm/arch/rockchip_smccc.h>
 #include <dt-bindings/clock/rk3588-cru.h>
 
 DECLARE_GLOBAL_DATA_PTR;
@@ -94,9 +95,19 @@ DECLARE_GLOBAL_DATA_PTR;
 #define HDMIRX_NODE_FDT_PATH		"/hdmirx-controller@fdee0000"
 #define RK3588_PHY_CONFIG		0xfdee00c0
 
+#define DMAC0_PRIORITY_REG		0xfdf32208
 #define VOP_M0_PRIORITY_REG		0xfdf82008
 #define VOP_M1_PRIORITY_REG		0xfdf82208
+#define MMU600PHP_TBU_PRIORITY_REG	0xfdf3a608
+#define MMU600PHP_TCU_PRIORITY_REG	0xfdf3a808
 #define QOS_PRIORITY_LEVEL(h, l)	((((h) & 7) << 8) | ((l) & 7))
+
+#define SATA0_BASE_ADDR			0xfe210000
+#define SATA1_BASE_ADDR			0xfe220000
+#define SATA2_BASE_ADDR			0xfe230000
+#define SATA_PI				0xC
+#define SATA_PORT_CMD			0x118
+#define SATA_FBS_ENABLE			BIT(22)
 
 #ifdef CONFIG_ARM64
 #include <asm/armv8/mmu.h>
@@ -1045,6 +1056,12 @@ int arch_cpu_init(void)
 	writel(0xffff1111, BUS_IOC_BASE + BUS_IOC_GPIO2D_IOMUX_SEL_H);
 #endif
 	/*
+	 * set DMAC0 to priority 0x404 to keep the same with DMAC1/2
+	 * which had been set 0x404 by default.
+	 */
+	writel(QOS_PRIORITY_LEVEL(4, 4), DMAC0_PRIORITY_REG);
+
+	/*
 	 * set VOP M0 and VOP M1 to priority 0x303,then
 	 * Peri > VOP/MCU > ISP/VICAP > other
 	 * Note: VOP priority can only be modified during the u-boot stage,
@@ -1052,6 +1069,21 @@ int arch_cpu_init(void)
 	 */
 	writel(QOS_PRIORITY_LEVEL(3, 3), VOP_M0_PRIORITY_REG);
 	writel(QOS_PRIORITY_LEVEL(3, 3), VOP_M1_PRIORITY_REG);
+	/*
+	 * set SATA,USB,GMAC to priority 0x404
+	 */
+	writel(QOS_PRIORITY_LEVEL(4, 4), MMU600PHP_TBU_PRIORITY_REG);
+	writel(QOS_PRIORITY_LEVEL(4, 4), MMU600PHP_TCU_PRIORITY_REG);
+
+	/*
+	 * Set SATA FBSCP and PORTS_IMPL for kernel drivers
+	 */
+	writel(SATA_FBS_ENABLE, SATA0_BASE_ADDR + SATA_PORT_CMD);
+	writel(1, SATA0_BASE_ADDR + SATA_PI);
+	writel(SATA_FBS_ENABLE, SATA1_BASE_ADDR + SATA_PORT_CMD);
+	writel(1, SATA1_BASE_ADDR + SATA_PI);
+	writel(SATA_FBS_ENABLE, SATA2_BASE_ADDR + SATA_PORT_CMD);
+	writel(1, SATA2_BASE_ADDR + SATA_PI);
 #endif
 
 	/* Select usb otg0 phy status to 0 that make rockusb can work at high-speed */
@@ -1213,7 +1245,7 @@ static void fdt_rm_cpu(const void *blob, u8 cpu_mask)
 	}
 }
 
-static void rk3582_fdt_rm_cpus(const void *blob, u8 cpu_mask)
+static void rk3582_3_fdt_rm_cpus(const void *blob, u8 cpu_mask)
 {
 	/*
 	 * policy:
@@ -1236,33 +1268,7 @@ static void rk3582_fdt_rm_cpus(const void *blob, u8 cpu_mask)
 	fdt_rm_cpu(blob, cpu_mask);
 }
 
-static void rk3582_fdt_rm_gpu(void *blob)
-{
-	/*
-	 * policy:
-	 *
-	 * Remove GPU by default.
-	 */
-	fdt_rm_path(blob, "/gpu@fb000000");
-	fdt_rm_path(blob, "/thermal-zones/soc-thermal/cooling-maps/map3");
-	debug("rm: gpu\n");
-}
-
-static void rk3582_fdt_rm_rkvdec01(void *blob)
-{
-	/*
-	 * policy:
-	 *
-	 * Remove rkvdec0 and rkvdec1 by default.
-	 */
-	fdt_rm_path(blob, "/rkvdec-core@fdc38000");
-	fdt_rm_path(blob, "/iommu@fdc38700");
-	fdt_rm_path(blob, "/rkvdec-core@fdc48000");
-	fdt_rm_path(blob, "/iommu@fdc48700");
-	debug("rm: rkvdec0, rkvdec1\n");
-}
-
-static void rk3582_fdt_rm_rkvenc01(void *blob, u8 mask)
+static void rk3582_3_fdt_rm_rkvenc01(void *blob, u8 mask)
 {
 	/*
 	 * policy:
@@ -1299,7 +1305,7 @@ static void rk3582_fdt_rm_rkvenc01(void *blob, u8 mask)
 	fdt_rename_path(blob, "/rkvenc-core@fdbe0000", "rkvenc@fdbe0000");
 }
 
-static void rk3583_fdt_rm_rkvdec01(void *blob, u8 mask)
+static void rk3582_3_fdt_rm_rkvdec01(void *blob, u8 mask)
 {
 	/*
 	 * policy:
@@ -1395,25 +1401,10 @@ static int fdt_fixup_modules(void *blob)
 	 * got before maybe not right by now. Make sure always reading the node
 	 * offset exactly before you are going to use.
 	 */
-	if (chip_id[0] == 0x35 && chip_id[1] == 0x82) {
-		/*
-		 * RK3582 Policy: gpu/rkvdec are removed by default, the same for other
-		 * IP under some condition.
-		 *
-		 * So don't use pattern like "if (rkvenc_mask) then rk3582_fdt_rm_rkvenc01()",
-		 * just go through all of them as this chip is rk3582.
-		 */
-		rk3582_fdt_rm_gpu(blob);
-		rk3582_fdt_rm_rkvdec01(blob);
-		rk3582_fdt_rm_rkvenc01(blob, rkvenc_mask);
-		rk3582_fdt_rm_cpus(blob, cpu_mask);
-	} else if (chip_id[0] == 0x35 && chip_id[1] == 0x83) {
-		/*
-		 * RK3583 Policy: some rules are the same as rk3582.
-		 */
-		rk3583_fdt_rm_rkvdec01(blob, rkvdec_mask);
-		rk3582_fdt_rm_rkvenc01(blob, rkvenc_mask);
-		rk3582_fdt_rm_cpus(blob, cpu_mask);
+	if (chip_id[0] == 0x35 && (chip_id[1] == 0x82 || chip_id[1] == 0x83)) {
+		rk3582_3_fdt_rm_rkvdec01(blob, rkvdec_mask);
+		rk3582_3_fdt_rm_rkvenc01(blob, rkvenc_mask);
+		rk3582_3_fdt_rm_cpus(blob, cpu_mask);
 	}
 
 	return 0;
@@ -1440,40 +1431,21 @@ int rk_board_fdt_fixup(const void *blob)
 	return 0;
 }
 
-#ifdef CONFIG_SPL_BUILD
-int spl_fit_standalone_release(char *id, uintptr_t entry_point)
+int fit_standalone_release(char *id, uintptr_t entry_point)
 {
-	u32 val;
-
 	/* pmu m0 configuration: */
 	/* set gpll */
 	writel(0x00f00042, CRU_BASE + CRU_GPLL_CON1);
-	/* set pmu mcu to access ddr memory */
-	val = readl(FIREWALL_DDR_BASE + FW_DDR_MST19_REG);
-	writel(val & 0x0000ffff, FIREWALL_DDR_BASE + FW_DDR_MST19_REG);
-	/* set pmu mcu to access system memory */
-	val = readl(FIREWALL_SYSMEM_BASE + FW_SYSM_MST19_REG);
-	writel(val & 0x000000ff, FIREWALL_SYSMEM_BASE + FW_SYSM_MST19_REG);
-	/* set pmu mcu to secure */
-	writel(0x00080000, PMU1_SGRF_BASE + PMU1_SGRF_SOC_CON0);
-	/* set start addr, pmu_mcu_code_addr_start */
-	writel(0xFFFF0000 | (entry_point >> 16), PMU1_SGRF_BASE + PMU1_SGRF_SOC_CON9);
-	/* set pmu_mcu_sram_addr_start */
-	writel(0xFFFF2000, PMU1_SGRF_BASE + PMU1_SGRF_SOC_CON10);
-	/* set pmu_mcu_tcm_addr_start */
-	writel(0xFFFF2000, PMU1_SGRF_BASE + PMU1_SGRF_SOC_CON13);
-	/* set cache cache_peripheral_addr */
-	/* 0xf0000000 ~ 0xfee00000 */
-	writel(0xffff0000, PMU1_SGRF_BASE + PMU1_SGRF_SOC_CON6);
-	writel(0xffffee00, PMU1_SGRF_BASE + PMU1_SGRF_SOC_CON7);
-	writel(0x00ff00ff, PMU1_SGRF_BASE + PMU1_SGRF_SOC_CON8);
-	/* enable PMU WDT reset system */
-	writel(0x02000200, BUS_SGRF_BASE + BUS_SGRF_SOC_CON2);
+
+	sip_smc_mcu_config(ROCKCHIP_SIP_CONFIG_PMUMCU_0_ID,
+			   ROCKCHIP_SIP_CONFIG_MCU_CODE_START_ADDR,
+			   0xffff0000 | (entry_point >> 16));
+
 	/* select WDT trigger global reset. */
 	writel(0x08400840, CRU_BASE + CRU_GLB_RST_CON);
 	/* release pmu mcu */
-	/* writel(0x20000000, PMU1CRU_BASE + PMU1CRU_SOFTRST_CON00); */
+	writel(0x20000000, PMU1CRU_BASE + PMU1CRU_SOFTRST_CON00);
 
 	return 0;
 }
-#endif
+

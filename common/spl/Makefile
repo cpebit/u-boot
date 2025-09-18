@@ -28,10 +28,13 @@ ifdef CONFIG_SPL_KERNEL_BOOT_PREBUILT
 ifeq ($(CONFIG_$(SPL_TPL_)LOAD_FIT),y)
 ifdef CONFIG_ROCKCHIP_PX30
 obj-y += spl_fit_tb_px30.o
+else ifdef CONFIG_ROCKCHIP_RV1126B
+obj-y += spl_fit_tb_rv1126b.o
 else
 obj-$(CONFIG_ARM64) += spl_fit_tb_arm64.o
 endif
 obj-$(CONFIG_ROCKCHIP_RV1106) += spl_fit_tb_rv1106.o
+obj-$(CONFIG_ROCKCHIP_RV1103B) += spl_fit_tb_rv1106.o
 obj-$(CONFIG_ROCKCHIP_RV1126) += spl_fit_tb_rv1126.o
 endif
 else
