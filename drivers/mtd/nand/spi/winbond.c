@@ -245,12 +245,6 @@ static int winbond_spinand_init(struct spinand_device *spinand)
 				WINBOND_CFG_BUF_READ);
 	}
 
-	if (spinand->id.data[1] == 0xaa && spinand->id.data[2] == 0x21) {
-		spinand->support_cont_read = true;
-		spinand_upd_cfg(spinand, CFG_BUF_ENABLE, 0);
-		printf("Support cont_read\n");
-	}
-
 	return 0;
 }
 
