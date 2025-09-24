@@ -117,6 +117,10 @@
 	u-boot,dm-spl;
 };
 
+&pcfg_pull_none_drv_level_2 {
+	u-boot,dm-spl;
+};
+
 &pcfg_pull_up {
 	u-boot,dm-spl;
 };
