@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+
+/dts-v1/;
+
+#include "rv1103b.dtsi"
+#include "rv1103b-u-boot.dtsi"
+#include <dt-bindings/input/input.h>
+
+/ {
+	model = "AAWireless 3";
+	compatible = "rockchip,aaw3", "rockchip,rv1103b";
+
+	chosen {
+		stdout-path = &uart0;
+		u-boot,spl-boot-order = &spi_nand;
+	};
+
+	gpio_keys: gpio-keys {
+		compatible = "gpio-keys";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		u-boot,dm-spl;
+		status = "okay";
+
+		button@0 {
+			gpio-key,wakeup = <1>;
+			gpios = <&gpio0 RK_PA3 GPIO_ACTIVE_LOW>;
+			label = "KEY_F15";
+			linux,code = <KEY_F15>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&pwrbtn>;
+			u-boot,dm-spl;
+		};
+	};
+
+	gpio_leds: gpio-leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&led_red_pin &led_green_pin &led_blue_pin>;
+		u-boot,dm-spl;
+		status = "okay";
+
+		led-red {
+			label = "rgb-red";
+			gpios = <&gpio0 RK_PA2 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "none";
+			default-state = "off";
+			u-boot,dm-spl;
+		};
+
+		led-green {
+			label = "rgb-green";
+			gpios = <&gpio0 RK_PA1 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "none";
+			default-state = "off";
+			u-boot,dm-spl;
+		};
+
+		led-blue {
+			label = "rgb-blue";
+			gpios = <&gpio1 RK_PB1 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "none";
+			default-state = "off";
+			u-boot,dm-spl;
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&sdmmc0 {
+	status = "disabled";
+};
+
+&emmc {
+	status = "disabled";
+};
+
+&otp {
+	u-boot,dm-spl;
+	status = "okay";
+};
+
+&pinctrl {
+	keys {
+		pwrbtn: pwrbtn {
+			rockchip,pins = <RK_GPIO0 RK_PA3 RK_FUNC_GPIO &pcfg_pull_up>;
+			u-boot,dm-spl;
+		};
+	};
+
+	leds {
+		led_red_pin: led-red-pin {
+			rockchip,pins = <0 RK_PA2 RK_FUNC_GPIO &pcfg_pull_none>;
+			u-boot,dm-spl;
+		};
+
+		led_green_pin: led-green-pin {
+			rockchip,pins = <0 RK_PA1 RK_FUNC_GPIO &pcfg_pull_none>;
+			u-boot,dm-spl;
+		};
+
+		led_blue_pin: led-blue-pin {
+			rockchip,pins = <1 RK_PB1 RK_FUNC_GPIO &pcfg_pull_none>;
+			u-boot,dm-spl;
+		};
+	};
+};
