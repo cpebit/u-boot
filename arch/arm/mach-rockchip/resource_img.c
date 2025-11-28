@@ -11,6 +11,7 @@
 #include <linux/libfdt.h>
 #include <linux/list.h>
 #include <asm/arch/resource_img.h>
+#include <asm/arch/rk_hwid.h>
 #include <asm/arch/uimage.h>
 #include <asm/arch/fit.h>
 
@@ -102,15 +103,15 @@ static int resource_check_header(struct resource_img_hdr *hdr)
 static void resource_dump(struct resource_file *f)
 {
 	printf("%s\n", f->name);
-	printf("  blk_start:  0x%08lx\n", (ulong)f->blk_start);
-	printf("  blk_offset: 0x%08lx\n", (ulong)f->blk_offset);
+	printf("  blk_start:  0x%08lx\n", f->blk_start);
+	printf("  blk_offset: 0x%08lx\n", f->blk_offset);
 	printf("  size:       0x%08x\n", f->size);
 	printf("  in_ram:     %d\n", f->in_ram);
 	printf("  hash_size:  %d\n\n", f->hash_size);
 }
 
 static int resource_add_file(const char *name, u32 size,
-			     u32 blk_start,  u32 blk_offset,
+			     ulong blk_start,  u32 blk_offset,
 			     char *hash, u32 hash_size,
 			     bool in_ram)
 {
@@ -148,42 +149,9 @@ static int resource_add_file(const char *name, u32 size,
 	return 0;
 }
 
-static int resource_setup_list(struct blk_desc *desc, ulong blk_start,
-			       void *resc_hdr, bool in_ram)
+void resource_destroy(void)
 {
-	struct resource_img_hdr *hdr = resc_hdr;
-	struct resource_entry *et;
-	u32 i, stride;
-	void *pos;
-
-	pos = (void *)hdr + hdr->c_offset * desc->blksz;
-	stride = hdr->e_blks * desc->blksz;
-
-	for (i = 0; i < hdr->e_nums; i++) {
-		et = pos + (i * stride);
-		if (memcmp(et->tag, ENTRY_TAG, ENTRY_TAG_SIZE))
-			continue;
-
-		resource_add_file(et->name, et->size,
-				  blk_start, et->blk_offset,
-				  et->hash, et->hash_size, in_ram);
-	}
-
-	return 0;
-}
-
-int resource_setup_ram_list(struct blk_desc *desc, void *hdr)
-{
-	if (!desc)
-		return -ENODEV;
-
-	if (resource_check_header(hdr)) {
-		printf("RESC: invalid\n");
-		return -EINVAL;
-	}
-
-	/* @blk_start: set as 'hdr' point addr, to be used in byte */
-	return resource_setup_list(desc, (ulong)hdr, hdr, true);
+	INIT_LIST_HEAD(&entry_head);
 }
 
 #ifdef CONFIG_ANDROID_BOOT_IMAGE
@@ -251,7 +219,52 @@ static int resource_setup_logo_bmp(struct blk_desc *desc)
 
 	return ret;
 }
+#endif
 
+static int resource_setup_list(struct blk_desc *desc, ulong blk_start,
+			       void *resc_hdr, bool in_ram)
+{
+	struct resource_img_hdr *hdr = resc_hdr;
+	struct resource_entry *et;
+	u32 i, stride;
+	void *pos;
+
+	pos = (void *)hdr + hdr->c_offset * desc->blksz;
+	stride = hdr->e_blks * desc->blksz;
+
+	for (i = 0; i < hdr->e_nums; i++) {
+		et = pos + (i * stride);
+		if (memcmp(et->tag, ENTRY_TAG, ENTRY_TAG_SIZE))
+			continue;
+
+		resource_add_file(et->name, et->size,
+				  blk_start, et->blk_offset,
+				  et->hash, et->hash_size, in_ram);
+	}
+
+#ifdef CONFIG_ANDROID_BOOT_IMAGE
+	/* For embedded resource.img file, we don't have a valid 'desc' */
+	if (desc->if_type != IF_TYPE_UNKNOWN)
+		resource_setup_logo_bmp(desc);
+#endif
+	return 0;
+}
+
+int resource_setup_ram_list(struct blk_desc *desc, void *hdr)
+{
+	if (!desc)
+		return -ENODEV;
+
+	if (resource_check_header(hdr)) {
+		printf("RESC: invalid\n");
+		return -EINVAL;
+	}
+
+	/* @blk_start: set as 'hdr' point addr, to be used in byte */
+	return resource_setup_list(desc, (ulong)hdr, hdr, true);
+}
+
+#ifdef CONFIG_ANDROID_BOOT_IMAGE
 static int resource_setup_blk_list(struct blk_desc *desc, ulong blk_start)
 {
 	struct resource_img_hdr *hdr;
@@ -297,7 +310,6 @@ static int resource_setup_blk_list(struct blk_desc *desc, ulong blk_start)
 	}
 
 	resource_setup_list(desc, blk_start, hdr, false);
-	resource_setup_logo_bmp(desc);
 out:
 	free(hdr);
 
@@ -334,6 +346,7 @@ static int resource_init(struct blk_desc *desc,
 		if (resc_buf && !resource_check_header((void *)resc_buf))
 			return resource_setup_ram_list(desc, (void *)resc_buf);
 	}
+
 #endif
 
 	return resource_setup_blk_list(desc, part->start + blk_offset);
@@ -357,16 +370,17 @@ static int resource_default(struct blk_desc *desc,
 
 static int resource_scan(void)
 {
-	struct blk_desc *desc = rockchip_get_bootdev();
+	struct blk_desc *desc;
 	__maybe_unused int ret;
 
+	if (!list_empty(&entry_head))
+		return 0;
+
+	desc = rockchip_get_bootdev();
 	if (!desc) {
 		printf("RESC: No bootdev\n");
 		return -ENODEV;
 	}
-
-	if (!list_empty(&entry_head))
-		return 0;
 
 #ifdef CONFIG_ROCKCHIP_FIT_IMAGE
 	ret = fit_image_init_resource(desc);
@@ -426,13 +440,11 @@ static struct resource_file *resource_get_file(const char *name)
 
 int rockchip_read_resource_file(void *buf, const char *name, int blk_offset, int len)
 {
-	struct blk_desc *desc = rockchip_get_bootdev();
+	struct blk_desc *desc;
 	struct resource_file *f;
 	int blk_cnt;
+	int blksz;
 	ulong pos;
-
-	if (!desc)
-		return -ENODEV;
 
 	f = resource_get_file(name);
 	if (!f) {
@@ -444,9 +456,14 @@ int rockchip_read_resource_file(void *buf, const char *name, int blk_offset, int
 		len = f->size;
 
 	if (f->in_ram) {
-		pos = f->blk_start + (f->blk_offset + blk_offset) * desc->blksz;
+		blksz = desc ? desc->blksz : 512;
+		pos = f->blk_start + (f->blk_offset + blk_offset) * blksz;
 		memcpy(buf, (char *)pos, len);
 	} else {
+		desc = rockchip_get_bootdev();
+		if (!desc)
+			return -ENODEV;
+
 		blk_cnt = DIV_ROUND_UP(len, desc->blksz);
 		if (blk_dread(desc,
 			      f->blk_start + f->blk_offset + blk_offset,
@@ -457,7 +474,26 @@ int rockchip_read_resource_file(void *buf, const char *name, int blk_offset, int
 	return len;
 }
 
-extern struct resource_file *resource_read_hwid_dtb(void);
+#ifdef CONFIG_ROCKCHIP_HWID_DTB
+static struct resource_file *resource_read_hwid_dtb(void)
+{
+	struct resource_file *file;
+	struct list_head *node;
+
+	hwid_init_data();
+
+	list_for_each(node, &entry_head) {
+		file = list_entry(node, struct resource_file, link);
+		if (!strstr(file->name, DTB_SUFFIX))
+			continue;
+
+		if (hwid_dtb_is_available(file->name))
+			return file;
+	}
+
+	return NULL;
+}
+#endif
 
 int rockchip_read_resource_dtb(void *fdt_addr, char **hash, int *hash_size)
 {
@@ -490,6 +526,29 @@ int rockchip_read_resource_dtb(void *fdt_addr, char **hash, int *hash_size)
 	printf("DTB: %s\n", f->name);
 
 	return 0;
+}
+
+int rockchip_read_ram_resource_dtb(void *resc_addr, void *fdt_addr)
+{
+	struct blk_desc desc;
+	char *hash;
+	int hash_size = 0;
+	int ret;
+
+	if (resource_check_header(resc_addr))
+		return -EINVAL;
+
+	desc.if_type = IF_TYPE_UNKNOWN;
+	desc.blksz = 512;
+	ret = resource_setup_ram_list(&desc, resc_addr);
+	if (ret)
+		return ret;
+
+	ret = rockchip_read_resource_dtb(fdt_addr, &hash, &hash_size);
+	/* anyway, destroy it */
+	resource_destroy();
+
+	return ret;
 }
 
 static int do_dump_resource(cmd_tbl_t *cmdtp, int flag,

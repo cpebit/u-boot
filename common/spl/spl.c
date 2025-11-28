@@ -95,7 +95,13 @@ int __weak spl_board_prepare_for_jump(struct spl_image_info *spl_image)
 	return 0;
 }
 
-/* Fix storages, like iomux  */
+/* Prepare storages, like iomux */
+__weak void spl_board_storages_prepare(struct spl_image_loader *loader)
+{
+	/* Nothing to do! */
+}
+
+/* Fix storages, like iomux */
 __weak void spl_board_storages_fixup(struct spl_image_loader *loader)
 {
 	/* Nothing to do! */
@@ -258,6 +264,10 @@ static int spl_dcache_enable(void)
 			debug("spl: no bd_t memory\n");
 			return -ENOMEM;
 		}
+		/*
+		 * If you want mmu init based on real dram configs from atags,
+		 * call dram_init_banksize() here.
+		 */
 		gd->bd->bi_dram[0].start = CONFIG_SYS_SDRAM_BASE;
 		gd->bd->bi_dram[0].size  = SZ_256M;
 		free_bd = true;
@@ -265,7 +275,7 @@ static int spl_dcache_enable(void)
 #endif
 	/* TLB memory should be SZ_16K base align and 4KB end align */
 	gd->arch.tlb_size = PGTABLE_SIZE;
-	gd->arch.tlb_addr = (ulong)memalign(SZ_16K, ALIGN(PGTABLE_SIZE, SZ_4K));
+	gd->arch.tlb_addr = (ulong)memalign(SZ_16K, ALIGN(gd->arch.tlb_size, SZ_4K));
 	if (!gd->arch.tlb_addr) {
 		debug("spl: no TLB memory\n");
 		return -ENOMEM;
@@ -348,6 +358,9 @@ static void spl_setup_relocate(void)
 	gd->fdt_blob = gd->new_fdt;
 
 	gd->reloc_off = gd->relocaddr - (unsigned long)__image_copy_start;
+
+	printf("\nRelocate from %08lx to %08lx.\n", (unsigned long)__image_copy_start,
+		gd->relocaddr);
 }
 #else
 static void spl_setup_relocate(void)
@@ -452,6 +465,8 @@ static int boot_from_devices(struct spl_image_info *spl_image,
 		else
 			puts("SPL: Unsupported Boot Device!\n");
 #endif
+		spl_board_storages_prepare(loader);
+
 		if (loader && !spl_load_image(spl_image, loader)) {
 			spl_image->boot_device = spl_boot_list[i];
 			return 0;
@@ -521,6 +536,11 @@ void board_init_r(gd_t *dummy1, ulong dummy2)
 
 	spl_set_bd();
 
+#ifdef CONFIG_SPL_RAM
+	dram_init();
+	printf("Ram size: %lx\n", (ulong)gd->ram_size);
+	gd->ram_top = CONFIG_SYS_SDRAM_BASE + gd->ram_size;
+#endif
 #ifdef CONFIG_SPL_OS_BOOT
 	dram_init_banksize();
 #endif
@@ -751,7 +771,7 @@ void spl_cleanup_before_jump(struct spl_image_info *spl_image)
 	dsb();
 	isb();
 
-	us = (get_ticks() - gd->sys_start_tick) / 24UL;
-	tt_us = get_ticks() / (COUNTER_FREQUENCY / 1000000);
+	us = (get_ticks() - gd->sys_start_tick) / (gd->arch.timer_rate_hz / 1000000);
+	tt_us = get_ticks() / (gd->arch.timer_rate_hz / 1000000);
 	printf("Total: %ld.%ld/%ld.%ld ms\n\n", us / 1000, us % 1000, tt_us / 1000, tt_us % 1000);
 }

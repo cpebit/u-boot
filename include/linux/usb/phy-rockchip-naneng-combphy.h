@@ -6,10 +6,10 @@
 #ifndef _PHY_ROCKCHIP_NANENG_COMBPHY_H
 #define _PHY_ROCKCHIP_NANENG_COMBPHY_H
 
-#if CONFIG_IS_ENABLED(PHY_ROCKCHIP_NANENG_COMBOPHY)
-int rockchip_combphy_usb3_uboot_init(void);
+#if CONFIG_IS_ENABLED(PHY_ROCKCHIP_NANENG_COMBOPHY) && !CONFIG_IS_ENABLED(ROCKUSB_MAX_SPEED_HS)
+int rockchip_combphy_usb3_uboot_init(fdt_addr_t phy_addr);
 #else
-static inline int rockchip_combphy_usb3_uboot_init(void)
+int rockchip_combphy_usb3_uboot_init(fdt_addr_t phy_addr)
 {
 	return -ENOTSUPP;
 }

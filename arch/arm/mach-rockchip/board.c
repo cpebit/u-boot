@@ -81,6 +81,11 @@ __weak int rk_board_dm_fdt_fixup(void *blob)
 	return 0;
 }
 
+__weak int soc_id_init(void)
+{
+	return 0;
+}
+
 __weak int soc_clk_dump(void)
 {
 	return 0;
@@ -292,6 +297,8 @@ static int boot_from_udisk(void)
 {
 	struct blk_desc *desc;
 	struct udevice *dev;
+	void *fdt_addr;
+	u32 fdt_size;
 	int devnum = -1;
 	char buf[32];
 
@@ -331,6 +338,28 @@ static int boot_from_udisk(void)
 			env_set("devtype", "usb");
 			env_set("devnum", buf);
 			printf("=== Booting from usb %d ===\n", devnum);
+
+			/*
+			 * If current kernel dtb is not from embedded dtb:
+			 *
+			 * Use 'gd->fdt_blob_kern' to reload the kernel dtb
+			 * from current bootdev(udisk) in the late bootflow.
+			 */
+			if (!gd->fdt_blob_kern) {
+				fdt_size = fdt_totalsize(gd->fdt_blob);
+				fdt_addr = memalign(ARCH_DMA_MINALIGN, fdt_size);
+				if (!fdt_addr)
+					return -ENOMEM;
+
+				/* destroy kernel dtb and resource list */
+				memcpy(fdt_addr, gd->fdt_blob, fdt_size);
+				fdt_set_magic((void *)gd->fdt_blob, ~0);
+				sysmem_free((phys_addr_t)gd->fdt_blob);
+				resource_destroy();
+
+				gd->fdt_blob_kern = fdt_addr;
+				gd->fdt_blob = fdt_addr;
+			}
 		} else {
 			printf("No available udisk image on usb %d\n", devnum);
 			return -ENODEV;
@@ -351,11 +380,11 @@ static void env_fixup(void)
 #ifdef ENV_MEM_LAYOUT_SETTINGS1
 	const char *env_addr0[] = {
 		"scriptaddr", "pxefile_addr_r",
-		"fdt_addr_r", "kernel_addr_r", "ramdisk_addr_r",
+		"fdt_addr_r", "kernel_addr_r", "kernel_addr_c", "ramdisk_addr_r",
 	};
 	const char *env_addr1[] = {
 		"scriptaddr1", "pxefile_addr1_r",
-		"fdt_addr1_r", "kernel_addr1_r", "ramdisk_addr1_r",
+		"fdt_addr1_r", "kernel_addr1_r", "kernel_addr1_c", "ramdisk_addr1_r",
 	};
 	int i;
 
@@ -508,9 +537,11 @@ int board_late_init(void)
 #endif
 
 #ifdef CONFIG_DRM_ROCKCHIP
-	if (rockchip_get_boot_mode() != BOOT_MODE_QUIESCENT)
+	if ((rockchip_get_boot_mode() != BOOT_MODE_QUIESCENT) &&
+	     !smp_event1(SEVT_3, STID_16))
 		rockchip_show_logo();
 #endif
+
 #ifdef CONFIG_ROCKCHIP_EINK_DISPLAY
 	rockchip_eink_show_uboot_logo();
 #endif
@@ -563,6 +594,8 @@ static void board_debug_init(void)
 
 int board_init(void)
 {
+	smp_event1(SEVT_0, 0);
+
 	board_debug_init();
 #ifdef DEBUG
 	soc_clk_dump();
@@ -576,8 +609,12 @@ int board_init(void)
 	early_download();
 
 	clks_probe();
+
 #ifdef CONFIG_DM_REGULATOR
-	regulators_enable_boot_on(is_hotkey(HK_REGULATOR));
+	if (smp_event1(SEVT_3, STID_18))
+		smp_event1(SEVT_1, STID_18);
+	else
+		regulators_enable_boot_on(is_hotkey(HK_REGULATOR));
 #endif
 #ifdef CONFIG_ROCKCHIP_IO_DOMAIN
 	io_domain_init();
@@ -590,6 +627,8 @@ int board_init(void)
 	if (ab_decrease_tries())
 		printf("Decrease ab tries count fail!\n");
 #endif
+	soc_id_init();
+
 	return rk_board_init();
 }
 
@@ -602,13 +641,73 @@ int interrupt_debugger_init(void)
 #endif
 }
 
+#ifdef CONFIG_SANITY_CPU_SWAP
+static void sanity_cpu_swap(void *blob)
+{
+	int cpus_offset;
+	int noffset;
+	ulong mpidr;
+	ulong reg;
+
+	cpus_offset = fdt_path_offset(blob, "/cpus");
+	if (cpus_offset < 0)
+		return;
+
+	for (noffset = fdt_first_subnode(blob, cpus_offset);
+	     noffset >= 0;
+	     noffset = fdt_next_subnode(blob, noffset)) {
+		const struct fdt_property *prop;
+		int len;
+
+		prop = fdt_get_property(blob, noffset, "device_type", &len);
+		if (!prop)
+			continue;
+		if (len < 4)
+			continue;
+		if (strcmp(prop->data, "cpu"))
+			continue;
+
+		/* only sanity first cpu */
+		reg = (ulong)fdtdec_get_addr_size_auto_parent(blob, cpus_offset, noffset,
+                                                              "reg", 0, NULL, false);
+		mpidr = read_mpidr() & 0xfff;
+		if ((mpidr & reg) != reg) {
+			printf("CPU swap error: Loader and Kernel firmware mismatch! "
+			       "Current cpu0 \"reg\" is 0x%lx but kernel dtb requires 0x%lx\n",
+			       mpidr, reg);
+			run_command("download", 0);
+		}
+		return;
+	}
+}
+#endif
+
+static int rockchip_dm_late_init(void *blob)
+{
+	struct udevice *dev;
+
+	/* Prepare for board_rng_seed(), dryrun and ignore result */
+	if (IS_ENABLED(CONFIG_BOARD_RNG_SEED) && IS_ENABLED(CONFIG_DM_RNG))
+		uclass_get_device(UCLASS_RNG, 0, &dev);
+
+	return 0;
+}
+
 int board_fdt_fixup(void *blob)
 {
+#ifdef CONFIG_SANITY_CPU_SWAP
+	sanity_cpu_swap(blob);
+#endif
 	/*
 	 * Device's platdata points to orignal fdt blob property,
 	 * access DM device before any fdt fixup.
+	 *
+	 * Do board specific init and common init.
 	 */
 	rk_board_dm_fdt_fixup(blob);
+	rockchip_dm_late_init(blob);
+
+	smp_event1(SEVT_2, STID_16);
 
 	/* Common fixup for DRM */
 #ifdef CONFIG_DRM_ROCKCHIP
@@ -622,7 +721,8 @@ int board_fdt_fixup(void *blob)
 	return rk_board_fdt_fixup(blob);
 }
 
-#if defined(CONFIG_ARM64_BOOT_AARCH32) || !defined(CONFIG_ARM64)
+int board_initr_caches_fixup(void)
+{
 /*
  * Common for OP-TEE:
  *	64-bit & 32-bit mode: share memory dcache is always enabled;
@@ -641,8 +741,7 @@ int board_fdt_fixup(void *blob)
  *
  * So 32-bit mode U-Boot should map OP-TEE share memory as dcache enabled.
  */
-int board_initr_caches_fixup(void)
-{
+#if defined(CONFIG_ARM64_BOOT_AARCH32) || !defined(CONFIG_ARM64)
 #ifdef CONFIG_OPTEE_CLIENT
 	struct memblock mem;
 
@@ -654,9 +753,16 @@ int board_initr_caches_fixup(void)
 		mmu_set_region_dcache_behaviour(mem.base, mem.size,
 						DCACHE_WRITEBACK);
 #endif
+#endif
+#ifdef CONFIG_PSTORE
+	debug("mapping memory 0x%lx-0x%lx non-cached\n", gd->pstore_addr,
+	      gd->pstore_addr + gd->pstore_size);
+	mmu_set_region_dcache_behaviour(gd->pstore_addr, gd->pstore_size,
+					DCACHE_OFF);
+#endif
+
 	return 0;
 }
-#endif
 
 void arch_preboot_os(uint32_t bootm_state, bootm_headers_t *images)
 {
@@ -803,7 +909,13 @@ int board_init_f_boot_flags(void)
 {
 	int boot_flags = 0;
 
-#ifdef CONFIG_FPGA_ROCKCHIP
+#ifdef CONFIG_ARM64
+	asm volatile("mrs %0, cntfrq_el0" : "=r" (gd->arch.timer_rate_hz));
+#else
+	asm volatile("mrc p15, 0, %0, c14, c0, 0" : "=r" (gd->arch.timer_rate_hz));
+#endif
+
+#if CONFIG_IS_ENABLED(FPGA_ROCKCHIP)
 	arch_fpga_init();
 #endif
 #ifdef CONFIG_PSTORE
@@ -1152,6 +1264,7 @@ void board_quiesce_devices(void *images)
 		       orig_images_ep, bootm_images->ep);
 	}
 #endif
+	smp_event1(SEVT_0, -1);
 
 	hotkey_run(HK_CMDLINE);
 	hotkey_run(HK_CLI_OS_GO);

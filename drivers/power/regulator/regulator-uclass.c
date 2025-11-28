@@ -54,7 +54,7 @@ int regulator_set_value(struct udevice *dev, int uV)
 	if (!ops || !ops->set_value)
 		return -ENOSYS;
 
-	if (uc_pdata->ramp_delay != -ENODATA) {
+	if ((uc_pdata->ramp_delay != -ENODATA) || ops->get_ramp_delay) {
 		if (!ops->get_value)
 			return -ENOSYS;
 		old_uV = ops->get_value(dev);
@@ -65,7 +65,10 @@ int regulator_set_value(struct udevice *dev, int uV)
 	ret = ops->set_value(dev, uV);
 
 	if (!ret && (old_uV != -ENODATA) && (old_uV != uV)) {
-		us = DIV_ROUND_UP(abs(uV - old_uV), uc_pdata->ramp_delay);
+		if (ops->get_ramp_delay)
+			us = ops->get_ramp_delay(dev, old_uV, uV);
+		else
+			us = DIV_ROUND_UP(abs(uV - old_uV), uc_pdata->ramp_delay);
 		udelay(us);
 		debug("%s: ramp=%d, old_uV=%d, uV=%d, us=%d\n",
 		      uc_pdata->name, uc_pdata->ramp_delay, old_uV, uV, us);
@@ -148,11 +151,27 @@ int regulator_get_enable(struct udevice *dev)
 int regulator_set_enable(struct udevice *dev, bool enable)
 {
 	const struct dm_regulator_ops *ops = dev_get_driver_ops(dev);
+	struct dm_regulator_uclass_platdata *uc_pdata;
+	int old_enable = 0;
+	int ret;
 
 	if (!ops || !ops->set_enable)
 		return -ENOSYS;
 
-	return ops->set_enable(dev, enable);
+	uc_pdata = dev_get_uclass_platdata(dev);
+	if (!enable && uc_pdata->always_on) {
+		printf("the always on regulator (%s) should never be disabled!\n", dev->name);
+		return -EACCES;
+	}
+
+	if (uc_pdata->enable_ramp_delay)
+		old_enable = regulator_get_enable(dev);
+
+	ret = ops->set_enable(dev, enable);
+	if (!ret && uc_pdata->enable_ramp_delay && !old_enable && enable)
+		udelay(uc_pdata->enable_ramp_delay);
+
+	return ret;
 }
 
 int regulator_set_suspend_enable(struct udevice *dev, bool enable)
@@ -273,6 +292,15 @@ int regulator_autoset(struct udevice *dev)
 
 	if (!uc_pdata->always_on && !uc_pdata->boot_on)
 		return -EMEDIUMTYPE;
+
+	/*
+	 * To compatible the old possible failure before adding this code,
+	 * ignore the result.
+	 */
+	if (uc_pdata->type == REGULATOR_TYPE_FIXED) {
+		regulator_set_enable(dev, true);
+		return 0;
+	}
 
 	if (uc_pdata->flags & REGULATOR_FLAG_AUTOSET_UV) {
 		ret = regulator_set_value(dev, uc_pdata->min_uV);
@@ -443,6 +471,8 @@ static int regulator_pre_probe(struct udevice *dev)
 	uc_pdata->ignore = dev_read_bool(dev, "regulator-loader-ignore");
 	uc_pdata->ramp_delay = dev_read_u32_default(dev, "regulator-ramp-delay",
 						    -ENODATA);
+	uc_pdata->enable_ramp_delay =
+	     dev_read_u32_default(dev, "regulator-enable-ramp-delay", 0);
 	node = dev_read_subnode(dev, "regulator-state-mem");
 	if (ofnode_valid(node)) {
 		uc_pdata->suspend_on = !ofnode_read_bool(node, "regulator-off-in-suspend");

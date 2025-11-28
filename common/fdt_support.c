@@ -251,6 +251,8 @@ int fdt_initrd(void *fdt, ulong initrd_start, ulong initrd_end)
 		}
 	}
 
+	fdt_increase_size(fdt, 512);
+
 	err = fdt_add_mem_rsv(fdt, initrd_start, initrd_end - initrd_start);
 	if (err < 0) {
 		printf("fdt_initrd: %s\n", fdt_strerror(err));
@@ -306,7 +308,11 @@ int fdt_bootargs_append(void *fdt, char *data)
 			if (!str)
 				return -ENOMEM;
 
+#ifdef CONFIG_ROCKCHIP_META
+			fdt_increase_size(fdt, 1024);
+#else
 			fdt_increase_size(fdt, 512);
+#endif
 			snprintf(str, len, "%s %s", bootargs, data);
 			ret = fdt_setprop(fdt, nodeoffset, arr_bootargs[i],
 					  str, len);

@@ -67,6 +67,8 @@ static void serdes_bridge_split_enable(struct rockchip_bridge *bridge)
 	if (serdes->chip_data->serdes_type == TYPE_DES)
 		serdes_bridge_split_init(serdes);
 
+	serdes_pinctrl_register(serdes->dev);
+
 	if (serdes->chip_data->bridge_ops->enable)
 		serdes->chip_data->bridge_ops->enable(serdes);
 
@@ -107,7 +109,7 @@ static bool serdes_bridge_split_detect(struct rockchip_bridge *bridge)
 	struct serdes *serdes = dev_get_priv(dev->parent);
 
 	if (serdes->chip_data->bridge_ops->detect)
-		ret = serdes->chip_data->bridge_ops->detect(serdes);
+		ret = serdes->chip_data->bridge_ops->detect(serdes, SER_LINKB);
 
 	SERDES_DBG_MFD("%s: %s %s %s\n", __func__, serdes->dev->name,
 		       serdes->chip_data->name, ret ? "detected" : "no detected");
@@ -161,6 +163,9 @@ static int serdes_bridge_split_probe(struct udevice *dev)
 static const struct udevice_id serdes_of_match[] = {
 #if IS_ENABLED(CONFIG_SERDES_DISPLAY_CHIP_MAXIM_MAX96745)
 	{ .compatible = "maxim,max96745-bridge-split", },
+#endif
+#if IS_ENABLED(CONFIG_SERDES_DISPLAY_CHIP_MAXIM_MAX96749)
+	{ .compatible = "maxim,max96749-bridge-split", },
 #endif
 #if IS_ENABLED(CONFIG_SERDES_DISPLAY_CHIP_MAXIM_MAX96755)
 	{ .compatible = "maxim,max96755-bridge-split", },

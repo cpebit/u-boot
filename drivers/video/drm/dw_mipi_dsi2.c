@@ -22,6 +22,7 @@
 #include <syscon.h>
 #include <asm/arch-rockchip/clock.h>
 #include <linux/iopoll.h>
+#include <linux/media-bus-format.h>
 
 #include "rockchip_display.h"
 #include "rockchip_crtc.h"
@@ -76,7 +77,9 @@
 #define PHY_TYPE(x)			UPDATE(x, 0, 0)
 #define DSI2_PHY_CLK_CFG		0X0104
 #define PHY_LPTX_CLK_DIV(x)		UPDATE(x, 12, 8)
+#define CLK_TYPE_MASK			BIT(0)
 #define NON_CONTINUOUS_CLK		BIT(0)
+#define CONTIUOUS_CLK			0
 #define DSI2_PHY_LP2HS_MAN_CFG		0x010c
 #define PHY_LP2HS_TIME(x)		UPDATE(x, 28, 0)
 #define DSI2_PHY_HS2LP_MAN_CFG		0x0114
@@ -168,6 +171,8 @@
 #define MSEC_PER_SEC			1000L
 
 #define GRF_REG_FIELD(reg, lsb, msb)	(((reg) << 16) | ((lsb) << 8) | (msb))
+
+#define MIPI_DSI_FMT_RGB101010		4
 
 enum vid_mode_type {
 	VID_MODE_TYPE_NON_BURST_SYNC_PULSES,
@@ -282,6 +287,7 @@ struct dw_mipi_dsi2 {
 	u32 version_major;
 	u32 version_minor;
 	struct clk sys_clk;
+	struct reset_ctl apb_rst;
 
 	unsigned int lane_hs_rate; /* Kbps/Ksps per lane */
 	u32 channel;
@@ -340,6 +346,16 @@ static void grf_field_write(struct dw_mipi_dsi2 *dsi2, enum grf_reg_fields index
 	regmap_write(dsi2->grf, reg, GENMASK(msb, lsb) << 16 | val << lsb);
 }
 
+static int dw_mipi_dsi2_pixel_format_to_bpp(u32 fmt)
+{
+	switch (fmt) {
+	case MIPI_DSI_FMT_RGB101010:
+		return 30;
+	default:
+		return mipi_dsi_pixel_format_to_bpp(fmt);
+	}
+}
+
 static unsigned long dw_mipi_dsi2_get_lane_rate(struct dw_mipi_dsi2 *dsi2)
 {
 	const struct drm_display_mode *mode = &dsi2->mode;
@@ -362,7 +378,7 @@ static unsigned long dw_mipi_dsi2_get_lane_rate(struct dw_mipi_dsi2 *dsi2)
 	else if (value >= 80 && value <= 4500)
 		return value * USEC_PER_SEC;
 
-	bpp = mipi_dsi_pixel_format_to_bpp(dsi2->format);
+	bpp = dw_mipi_dsi2_pixel_format_to_bpp(dsi2->format);
 	if (bpp < 0)
 		bpp = 24;
 
@@ -447,6 +463,22 @@ static int dw_mipi_dsi2_read_from_fifo(struct dw_mipi_dsi2 *dsi2,
 	return 0;
 }
 
+static void dw_mipi_dsi2_clk_management(struct dw_mipi_dsi2 *dsi2)
+{
+	u32 clk_type;
+
+	/*
+	 * initial deskew calibration is send after phy_power_on,
+	 * then we can configure clk_type.
+	 */
+	if (dsi2->mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS)
+		clk_type = NON_CONTINUOUS_CLK;
+	else
+		clk_type = CONTIUOUS_CLK;
+
+	dsi_update_bits(dsi2, DSI2_PHY_CLK_CFG, CLK_TYPE_MASK, clk_type);
+}
+
 static ssize_t dw_mipi_dsi2_transfer(struct dw_mipi_dsi2 *dsi2,
 				    const struct mipi_dsi_msg *msg)
 {
@@ -455,6 +487,7 @@ static ssize_t dw_mipi_dsi2_transfer(struct dw_mipi_dsi2 *dsi2,
 	int val;
 	u32 mode;
 
+	dw_mipi_dsi2_clk_management(dsi2);
 	dsi_update_bits(dsi2, DSI2_DSI_VID_TX_CFG, LPDT_DISPLAY_CMD_EN,
 			msg->flags & MIPI_DSI_MSG_USE_LPM ?
 			LPDT_DISPLAY_CMD_EN : 0);
@@ -513,26 +546,32 @@ static ssize_t dw_mipi_dsi2_transfer(struct dw_mipi_dsi2 *dsi2,
 
 static void dw_mipi_dsi2_ipi_color_coding_cfg(struct dw_mipi_dsi2 *dsi2)
 {
-	u32 val, color_depth;
+	u32 val, ipi_depth;
 
 	switch (dsi2->format) {
 	case MIPI_DSI_FMT_RGB666:
 	case MIPI_DSI_FMT_RGB666_PACKED:
-		color_depth = IPI_DEPTH_6_BITS;
+		ipi_depth = IPI_DEPTH_6_BITS;
 		break;
 	case MIPI_DSI_FMT_RGB565:
-		color_depth = IPI_DEPTH_5_6_5_BITS;
+		ipi_depth = IPI_DEPTH_5_6_5_BITS;
+		break;
+	case MIPI_DSI_FMT_RGB101010:
+		ipi_depth = IPI_DEPTH_10_BITS;
 		break;
 	case MIPI_DSI_FMT_RGB888:
 	default:
-		color_depth = IPI_DEPTH_8_BITS;
+		ipi_depth = IPI_DEPTH_8_BITS;
 		break;
 	}
 
-	val = IPI_DEPTH(color_depth) |
+	if (dsi2->dsc_enable)
+		ipi_depth = IPI_DEPTH_8_BITS;
+
+	val = IPI_DEPTH(ipi_depth) |
 	      IPI_FORMAT(dsi2->dsc_enable ? IPI_FORMAT_DSC : IPI_FORMAT_RGB);
 	dsi_write(dsi2, DSI2_IPI_COLOR_MAN_CFG, val);
-	grf_field_write(dsi2, IPI_COLOR_DEPTH, color_depth);
+	grf_field_write(dsi2, IPI_COLOR_DEPTH, ipi_depth);
 
 	if (dsi2->dsc_enable)
 		grf_field_write(dsi2, IPI_FORMAT, IPI_FORMAT_DSC);
@@ -609,13 +648,13 @@ static void dw_mipi_dsi2_set_vid_mode(struct dw_mipi_dsi2 *dsi2)
 	u32 val = 0, mode;
 	int ret;
 
-	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_HFP)
+	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_NO_HFP)
 		val |= BLK_HFP_HS_EN;
 
-	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_HBP)
+	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_NO_HBP)
 		val |= BLK_HBP_HS_EN;
 
-	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_HSA)
+	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_NO_HSA)
 		val |= BLK_HSA_HS_EN;
 
 	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_BURST)
@@ -666,15 +705,20 @@ static void dw_mipi_dsi2_enable(struct dw_mipi_dsi2 *dsi2)
 	u32 mode;
 	int ret;
 
+	dw_mipi_dsi2_clk_management(dsi2);
 	dw_mipi_dsi2_ipi_set(dsi2);
 
 	if (dsi2->auto_calc_mode) {
+		dsi_update_bits(dsi2, DSI2_DSI_GENERAL_CFG, BTA_EN, 0);
+
 		dsi_write(dsi2, DSI2_MODE_CTRL, AUTOCALC_MODE);
 		ret = readl_poll_timeout(dsi2->base + DSI2_MODE_STATUS,
 					 mode, mode == IDLE_MODE,
 					 MODE_STATUS_TIMEOUT_US);
 		if (ret < 0)
 			printf("auto calculation training failed\n");
+
+		dsi_update_bits(dsi2, DSI2_DSI_GENERAL_CFG, BTA_EN, BTA_EN);
 	}
 
 	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO)
@@ -815,12 +859,33 @@ static int dw_mipi_dsi2_connector_init(struct rockchip_connector *conn, struct d
 	struct rockchip_phy *phy = NULL;
 	struct udevice *phy_dev;
 	struct udevice *dev;
+	u16 dsc_bpp_x16;
 	int ret;
 
 	conn_state->disp_info  = rockchip_get_disp_info(conn_state->type, dsi2->id);
 	dsi2->dcphy.phy = conn->phy;
 
-	conn_state->output_mode = ROCKCHIP_OUT_MODE_P888;
+	switch (dsi2->format) {
+	case MIPI_DSI_FMT_RGB101010:
+		conn_state->output_mode = ROCKCHIP_OUT_MODE_AAAA;
+		conn_state->bus_format = MEDIA_BUS_FMT_RGB101010_1X30;
+		break;
+	case MIPI_DSI_FMT_RGB888:
+		conn_state->output_mode = ROCKCHIP_OUT_MODE_P888;
+		conn_state->bus_format = MEDIA_BUS_FMT_RGB888_1X24;
+		break;
+	case MIPI_DSI_FMT_RGB666:
+		conn_state->output_mode = ROCKCHIP_OUT_MODE_P666;
+		conn_state->bus_format = MEDIA_BUS_FMT_RGB666_1X18;
+		break;
+	case MIPI_DSI_FMT_RGB565:
+		conn_state->output_mode = ROCKCHIP_OUT_MODE_P565;
+		conn_state->bus_format = MEDIA_BUS_FMT_RGB565_1X16;
+		break;
+	default:
+		return -EINVAL;
+	}
+
 	conn_state->color_encoding = DRM_COLOR_YCBCR_BT709;
 	conn_state->color_range = DRM_COLOR_YCBCR_FULL_RANGE;
 	conn_state->output_if |=
@@ -879,13 +944,19 @@ static int dw_mipi_dsi2_connector_init(struct rockchip_connector *conn, struct d
 	}
 
 	if (dsi2->dsc_enable) {
+		if (!dsi2->pps)
+			return -EINVAL;
+
+		dsc_bpp_x16 = ((dsi2->pps->pps_4 & 0x3) << 8) |
+				dsi2->pps->bits_per_pixel_low;
+
 		cstate->dsc_enable = 1;
 		cstate->dsc_sink_cap.version_major = dsi2->version_major;
 		cstate->dsc_sink_cap.version_minor = dsi2->version_minor;
 		cstate->dsc_sink_cap.slice_width = dsi2->slice_width;
 		cstate->dsc_sink_cap.slice_height = dsi2->slice_height;
 		/* only can support rgb888 panel now */
-		cstate->dsc_sink_cap.target_bits_per_pixel_x16 = 8 << 4;
+		cstate->dsc_sink_cap.target_bits_per_pixel_x16 = dsc_bpp_x16;
 		cstate->dsc_sink_cap.native_420 = 0;
 		memcpy(&cstate->pps, dsi2->pps, sizeof(struct drm_dsc_picture_parameter_set));
 	}
@@ -961,6 +1032,10 @@ static void dw_mipi_dsi2_set_hs_clk(struct dw_mipi_dsi2 *dsi2, unsigned long rat
 
 static void dw_mipi_dsi2_host_softrst(struct dw_mipi_dsi2 *dsi2)
 {
+	reset_assert(&dsi2->apb_rst);
+	udelay(20);
+	reset_deassert(&dsi2->apb_rst);
+
 	dsi_write(dsi2, DSI2_SOFT_RESET, 0X0);
 	udelay(100);
 	dsi_write(dsi2, DSI2_SOFT_RESET, SYS_RSTN | PHY_RSTN | IPI_RSTN);
@@ -993,8 +1068,11 @@ static void dw_mipi_dsi2_phy_clk_mode_cfg(struct dw_mipi_dsi2 *dsi2)
 	u32 esc_clk_div;
 	u32 val = 0;
 
-	if (dsi2->mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS)
-		val |= NON_CONTINUOUS_CLK;
+	/*
+	 * clk_type should be NON_CONTINUOUS_CLK before
+	 * initial deskew calibration be sent.
+	 */
+	val |= NON_CONTINUOUS_CLK;
 
 	/* The Escape clock ranges from 1MHz to 20MHz. */
 	esc_clk_div = DIV_ROUND_UP(sys_clk, 20 * 2);
@@ -1072,7 +1150,7 @@ static void dw_mipi_dsi2_tx_option_set(struct dw_mipi_dsi2 *dsi2)
 
 	val = BTA_EN | EOTP_TX_EN;
 
-	if (dsi2->mode_flags & MIPI_DSI_MODE_EOT_PACKET)
+	if (dsi2->mode_flags & MIPI_DSI_MODE_NO_EOT_PACKET)
 		val &= ~EOTP_TX_EN;
 
 	dsi_write(dsi2, DSI2_DSI_GENERAL_CFG, val);
@@ -1299,6 +1377,12 @@ static int dw_mipi_dsi2_probe(struct udevice *dev)
 		return ret;
 	}
 
+	ret = reset_get_by_name(dev, "apb", &dsi2->apb_rst);
+	if (ret) {
+		pr_err("reset_get_by_name(apb) failed: %d\n", ret);
+		return ret;
+	}
+
 	dsi2->dev = dev;
 	dsi2->pdata = pdata;
 	dsi2->id = id;
@@ -1423,9 +1507,9 @@ static int dw_mipi_dsi2_child_post_bind(struct udevice *dev)
 	device->mode_flags = dev_read_u32_default(dev, "dsi,flags",
 						  MIPI_DSI_MODE_VIDEO |
 						  MIPI_DSI_MODE_VIDEO_BURST |
-						  MIPI_DSI_MODE_VIDEO_HBP |
+						  MIPI_DSI_MODE_VIDEO_NO_HBP |
 						  MIPI_DSI_MODE_LPM |
-						  MIPI_DSI_MODE_EOT_PACKET);
+						  MIPI_DSI_MODE_NO_EOT_PACKET);
 	device->channel = dev_read_u32_default(dev, "reg", 0);
 
 	return 0;

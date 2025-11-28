@@ -158,6 +158,7 @@ config SPL_BOOT_IMAGE_BUF
 config SPL_RELOC_TEXT_BASE
 	hex "Address the SPL relocate to"
 	depends on !SPL_SKIP_RELOCATE
+	default 0x03d00000
 	help
 	  The address on the ram where the SPL relocate to.
 
@@ -308,6 +309,14 @@ config SPL_CRYPTO_SUPPORT
 	  Enable crypto drivers in SPL. These drivers can be used to
 	  accelerate secure boot processing in secure applications. Enable
 	  this option to build the drivers in drivers/crypto as part of an
+	  SPL build.
+
+config SPL_KEYLAD_SUPPORT
+	bool "Support keylad drivers"
+	help
+	  Enable keylad drivers in SPL. These drivers can be used to pass
+	  otp keys to other IP addresses. (e.g. CRYPTO module). Enable
+	  this option to build the drivers in drivers/keylad as part of an
 	  SPL build.
 
 config SPL_HASH_SUPPORT
@@ -883,12 +892,6 @@ config SPL_ATF_NO_PLATFORM_PARAM
 	  always pass NULL for the platform parameter.
 
 	  If your ATF is affected, say Y.
-
-config SPL_ATF_AARCH32_BL33
-	bool "Support BL33 runs as AArch32 mode"
-	depends on SPL_ATF
-	help
-	  This option setup the AArch32 Mode for BL33.
 
 config SPL_OPTEE
 	bool "Support OP-TEE Trusted OS"

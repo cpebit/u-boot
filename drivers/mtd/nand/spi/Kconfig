@@ -124,4 +124,29 @@ config SPI_NAND_GSTO
 	bool "GSTO SPI flash support"
 	help
 	  Add support for various GSTO SPI Nand flash chips
+
+config SPI_NAND_ZBIT
+	default y
+	bool "ZBIT SPI flash support"
+	help
+	  Add support for various ZBIT SPI Nand flash chips
+
+config SPI_NAND_HIKSEMI
+	default y
+	bool "HIKSEMI SPI flash support"
+	help
+	  Add support for various HIKSEMI SPI Nand flash chips
+
+config SPI_NAND_KINGSTON
+	default y
+	bool "KINGSTON SPI flash support"
+	help
+	  Add support for various KINGSTON SPI Nand flash chips
+
+config SPI_NAND_CONT_READ
+	bool "Enable SPI flash continuous read support"
+	default n
+	help
+	 Add support for SPI Nand flash chips cont read.
+
 endif

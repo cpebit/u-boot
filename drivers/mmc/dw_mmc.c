@@ -163,43 +163,19 @@ static void dwmci_prepare_data(struct dwmci_host *host,
 	dwmci_writel(host, DWMCI_BYTCNT, data->blocksize * data->blocks);
 }
 
-#ifdef CONFIG_SPL_BUILD
-static unsigned int dwmci_get_drto(struct dwmci_host *host,
-				   const unsigned int size)
-{
-	unsigned int drto_clks;
-	unsigned int drto_div;
-	unsigned int drto_ms;
-
-	drto_clks = dwmci_readl(host, DWMCI_TMOUT) >> 8;
-	drto_div = (dwmci_readl(host, DWMCI_CLKDIV) & 0xff) * 2;
-	if (drto_div == 0)
-		drto_div = 1;
-
-	drto_ms = DIV_ROUND_UP_ULL((u64)MSEC_PER_SEC * drto_clks * drto_div,
-				   host->mmc->clock);
-
-	/* add a bit spare time */
-	drto_ms += 10;
-
-	return drto_ms;
-}
-#else
 static unsigned int dwmci_get_drto(struct dwmci_host *host,
 				   const unsigned int size)
 {
 	unsigned int timeout;
 
 	timeout = size * 8;	/* counting in bits */
-	timeout *= 10;		/* wait 10 times as long */
-	timeout /= host->mmc->clock;
 	timeout /= host->mmc->bus_width;
-	timeout *= 1000;	/* counting in msec */
-	timeout = (timeout < 10000) ? 10000 : timeout;
+	timeout *= 10;		/* wait 10 times as long */
+	timeout /= (host->mmc->clock / 1000); /* counting in msec */
+	timeout = (timeout < 1000) ? 1000 : timeout;
 
 	return timeout;
 }
-#endif
 
 static unsigned int dwmci_get_cto(struct dwmci_host *host)
 {
@@ -281,7 +257,7 @@ static int dwmci_data_transfer(struct dwmci_host *host, struct mmc_data *data)
 		if (host->fifo_mode && size) {
 			len = 0;
 			if (data->flags == MMC_DATA_READ &&
-			    (mask & DWMCI_INTMSK_RXDR)) {
+			    (mask & (DWMCI_INTMSK_RXDR | DWMCI_INTMSK_DTO))) {
 				while (size) {
 					len = dwmci_readl(host, DWMCI_STATUS);
 					len = (len >> DWMCI_FIFO_SHIFT) &
@@ -307,9 +283,9 @@ static int dwmci_data_transfer(struct dwmci_host *host, struct mmc_data *data)
 read_again:
 					size = size > len ? (size - len) : 0;
 				}
+
 				dwmci_writel(host, DWMCI_RINTSTS,
-					     DWMCI_INTMSK_RXDR);
-				start = get_timer(0);
+					     mask & (DWMCI_INTMSK_RXDR | DWMCI_INTMSK_DTO));
 			} else if (data->flags == MMC_DATA_WRITE &&
 				   (mask & DWMCI_INTMSK_TXDR)) {
 				while (size) {
@@ -339,7 +315,6 @@ write_again:
 				}
 				dwmci_writel(host, DWMCI_RINTSTS,
 					     DWMCI_INTMSK_TXDR);
-				start = get_timer(0);
 			}
 		}
 
@@ -440,6 +415,8 @@ static int dwmci_send_cmd(struct mmc *mmc, struct mmc_cmd *cmd,
 
 	if (cmd->cmdidx == MMC_CMD_STOP_TRANSMISSION)
 		flags |= DWMCI_CMD_ABORT_STOP;
+	else if (cmd->cmdidx == MMC_CMD_GO_IDLE_STATE)
+		flags |= SDMMC_CMD_INIT | DWMCI_CMD_ABORT_STOP;
 	else
 		flags |= DWMCI_CMD_PRV_DAT_WAIT;
 
@@ -534,13 +511,19 @@ static int dwmci_send_cmd_prepare(struct mmc *mmc, struct mmc_cmd *cmd,
 	unsigned int timeout = 500;
 	u32 mask;
 	ulong start = get_timer(0);
+	ulong mmc_idmac;
 	struct bounce_buffer bbstate;
 
-	cur_idmac = malloc(ROUND(DIV_ROUND_UP(data->blocks, 8) *
-			   sizeof(struct dwmci_idmac),
-			   ARCH_DMA_MINALIGN) + ARCH_DMA_MINALIGN - 1);
-	if (!cur_idmac)
-		return -ENODATA;
+	mmc_idmac = dev_read_u32_default(mmc->dev, "mmc-idmac", 0);
+	if (mmc_idmac) {
+		cur_idmac = (struct dwmci_idmac *)mmc_idmac;
+	} else {
+		cur_idmac = malloc(ROUND(DIV_ROUND_UP(data->blocks, 8) *
+			sizeof(struct dwmci_idmac),
+			ARCH_DMA_MINALIGN) + ARCH_DMA_MINALIGN - 1);
+		if (!cur_idmac)
+			return -ENODATA;
+	}
 
 	while (dwmci_readl(host, DWMCI_STATUS) & DWMCI_BUSY) {
 		if (get_timer(start) > timeout) {
@@ -692,8 +675,12 @@ static int dwmci_setup_bus(struct dwmci_host *host, u32 freq)
 		}
 	} while (status & DWMCI_CMD_START);
 
+#ifdef CONFIG_SPL_BLK_READ_PREPARE
+	dwmci_writel(host, DWMCI_CLKENA, DWMCI_CLKEN_ENABLE);
+#else
 	dwmci_writel(host, DWMCI_CLKENA, DWMCI_CLKEN_ENABLE |
 			DWMCI_CLKEN_LOW_PWR);
+#endif
 
 	dwmci_writel(host, DWMCI_CMD, DWMCI_CMD_PRV_DAT_WAIT |
 			DWMCI_CMD_UPD_CLK | DWMCI_CMD_START);
@@ -818,7 +805,7 @@ static int dwmci_init(struct mmc *mmc)
 	if (host->dev_index == 0)
 		dwmci_writel(host, DWMCI_PWREN, 1);
 	else if (host->dev_index == 1)
-		dwmci_writel(host, DWMCI_PWREN, 0);
+		dwmci_writel(host, DWMCI_PWREN, CONFIG_MMC_DW_PWREN_VALUE);
 	else
 		dwmci_writel(host, DWMCI_PWREN, 1);
 #else

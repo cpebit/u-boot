@@ -15,8 +15,8 @@
 
 struct resource_file {
 	char		name[MAX_FILE_NAME_LEN];
-	uint32_t	blk_start;
-	uint32_t	blk_offset;
+	ulong		blk_start;
+	ulong		blk_offset;
 	char		hash[MAX_HASH_LEN];
 	uint32_t	hash_size;
 	uint32_t	size;		/* in byte */
@@ -25,6 +25,11 @@ struct resource_file {
 };
 
 extern struct list_head entry_head;
+
+/*
+ * resource_destroy() - Destroy resource file list
+ */
+void resource_destroy(void);
 
 /*
  * resource_setup_ram_list() - setup resource file list by given resource image.
@@ -56,5 +61,13 @@ int rockchip_read_resource_file(void *buf, const char *name, int blk_offset, int
  * @hash_size: hash value length
  */
 int rockchip_read_resource_dtb(void *fdt_addr, char **hash, int *hash_size);
+
+/*
+ * rockchip_read_ram_resource_dtb() - read dtb file from a ram resource file.
+ *
+ * @resc_hdr: resource buffer.
+ * @fdt_addr: destination buf to store dtb file
+ */
+int rockchip_read_ram_resource_dtb(void *resc_addr, void *fdt_addr);
 
 #endif

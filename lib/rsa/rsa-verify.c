@@ -27,6 +27,16 @@
 /* Default public exponent for backward compatibility */
 #define RSA_DEFAULT_PUBEXP	65537
 
+/* Default otp value for enable rsa4096 */
+#ifndef OTP_RSA4096_ENABLE_VALUE
+#define OTP_RSA4096_ENABLE_VALUE	0x30
+#endif
+
+/* Default otp value for enable secureboot */
+#ifndef OTP_SECURE_BOOT_ENABLE_VALUE
+#define OTP_SECURE_BOOT_ENABLE_VALUE	0xff
+#endif
+
 /**
  * rsa_verify_padding() - Verify RSA message padding is valid
  *
@@ -605,12 +615,11 @@ int rsa_burn_key_hash(struct image_sign_info *info)
 	struct udevice *dev;
 	struct key_prop prop;
 	char name[100] = {0};
-	u16 secure_flags = 0;
+	uint8_t otp_write;
 	const void *blob = info->fdt_blob;
-	uint8_t digest[FIT_MAX_HASH_LEN];
-	uint8_t digest_read[FIT_MAX_HASH_LEN];
-	int sig_node, node, digest_len, i;
-	int ret = 0, written_size = 0;
+	uint8_t digest_write[FIT_MAX_HASH_LEN];
+	int sig_node, node, digest_len;
+	int ret = 0;
 
 	/* Check burn-key-hash flag in itb first */
 	sig_node = fdt_subnode_offset(blob, 0, FIT_SIG_NODENAME);
@@ -633,13 +642,17 @@ int rsa_burn_key_hash(struct image_sign_info *info)
 	if (!dev)
 		return -ENODEV;
 
+#if !defined(CONFIG_SPL_REVOKE_PUB_KEY)
+	u16 secure_flags_read;
+
 	ret = misc_otp_read(dev, OTP_SECURE_BOOT_ENABLE_ADDR,
-			    &secure_flags, OTP_SECURE_BOOT_ENABLE_SIZE);
+			    &secure_flags_read, OTP_SECURE_BOOT_ENABLE_SIZE);
 	if (ret)
 		return ret;
 
-	if (secure_flags == 0xff)
+	if ((secure_flags_read & 0xff) == 0xff)
 		return 0;
+#endif
 
 	if (!prop.hash || !prop.modulus || !prop.public_exponent_BN)
 		return -ENOENT;
@@ -651,7 +664,8 @@ int rsa_burn_key_hash(struct image_sign_info *info)
 		return -ENOENT;
 #endif
 	key_len = info->crypto->key_len;
-	if (info->crypto->key_len != RSA2048_BYTES)
+
+	if ((key_len != RSA4096_BYTES) && (key_len != RSA2048_BYTES))
 		return -EINVAL;
 
 	rsa_key = calloc(key_len * 3, sizeof(char));
@@ -673,69 +687,137 @@ int rsa_burn_key_hash(struct image_sign_info *info)
 			       key_len, CONFIG_RSA_C_SIZE);
 #endif
 
+	/* Calculate and compare key hash */
 	ret = calculate_hash(rsa_key, CONFIG_RSA_N_SIZE + CONFIG_RSA_E_SIZE + CONFIG_RSA_C_SIZE,
-			     info->checksum->name, digest, &digest_len);
+			     info->checksum->name, digest_write, &digest_len);
 	if (ret)
 		goto error;
 
-	if (memcmp(digest, prop.hash, digest_len) != 0) {
+	if (memcmp(digest_write, prop.hash, digest_len) != 0) {
 		printf("RSA: Compare public key hash fail.\n");
+		ret = -EINVAL;
 		goto error;
 	}
 
-	/* burn key hash here */
-	ret = misc_otp_read(dev, OTP_RSA_HASH_ADDR, digest_read, OTP_RSA_HASH_SIZE);
-	if (ret)
-		goto error;
+	/* Delay 3 seconds to make sure power supply is steady. */
+	printf("Waiting for power supply steady for OTP write. Please don't turn off the device\n");
+	mdelay(3000);
 
-	for (i = 0; i < OTP_RSA_HASH_SIZE; i++) {
-		if (digest_read[i] == digest[i]) {
-			written_size++;
-		} else if (digest_read[i] == 0) {
-			break;
-		} else {
-			printf("RSA: The secure region has been written.\n");
-			ret = -EIO;
-			goto error;
-		}
+#if defined(CONFIG_SPL_REVOKE_PUB_KEY)
+	/* Burn next key hash here */
+	if (misc_otp_write_verify(dev, OTP_NEXT_RSA_HASH_ADDR, digest_write,
+				  OTP_NEXT_RSA_HASH_SIZE)) {
+		printf("RSA: Write next public key hash fail.\n");
+		ret = -EIO;
+		goto error;
+	} else {
+		printf("RSA: Write next RSA key hash successfully.\n");
 	}
-
-	if (OTP_RSA_HASH_SIZE - written_size) {
-		ret = misc_otp_write(dev, OTP_RSA_HASH_ADDR + written_size, digest + written_size,
-				     OTP_RSA_HASH_SIZE - written_size);
-		if (ret)
-			goto error;
-	}
-
-	if (ret)
-		goto error;
-
-	memset(digest_read, 0, FIT_MAX_HASH_LEN);
-	ret = misc_otp_read(dev, OTP_RSA_HASH_ADDR, digest_read, OTP_RSA_HASH_SIZE);
-	if (ret)
-		goto error;
-
-	if (memcmp(digest, digest_read, digest_len) != 0) {
-		ret = -EAGAIN;
+#else
+	/* Burn key hash here */
+	if (misc_otp_write_verify(dev, OTP_RSA_HASH_ADDR, digest_write, OTP_RSA_HASH_SIZE)) {
 		printf("RSA: Write public key hash fail.\n");
+		ret = -EIO;
 		goto error;
-	}
-
-	secure_flags = 0xff;
-	ret = misc_otp_write(dev, OTP_SECURE_BOOT_ENABLE_ADDR,
-			     &secure_flags, OTP_SECURE_BOOT_ENABLE_SIZE);
-	if (ret)
-		goto error;
-
-	if (written_size)
-		printf("RSA: Repair RSA key hash successfully.\n");
-	else
+	} else {
 		printf("RSA: Write RSA key hash successfully.\n");
+	}
+#endif
+/*
+ * For some chips, rsa4096 flag and secureboot flag should be burned together
+ * because of ecc enable. OTP_RSA4096_ENABLE_ADDR won't defined for burning
+ * these two flags only once.
+ */
+#if defined(CONFIG_FIT_ENABLE_RSA4096_SUPPORT) && defined(OTP_RSA4096_ENABLE_ADDR)
+	/* Burn rsa4096 flag here */
+	otp_write = OTP_RSA4096_ENABLE_VALUE;
+	if (misc_otp_write_verify(dev, OTP_RSA4096_ENABLE_ADDR, &otp_write,
+				  OTP_RSA4096_ENABLE_SIZE)) {
+		printf("RSA: Write rsa4096 flag fail.\n");
+		ret = -EIO;
+		goto error;
+	} else {
+		printf("RSA: Write rsa4096 flag successfully.\n");
+	}
+#endif
+
+#if defined(CONFIG_SPL_REVOKE_PUB_KEY)
+	/* Burn revoke key config here */
+	otp_write = OTP_RSA_HASH_REVOKE_VAL;
+	if (misc_otp_write_verify(dev, OTP_RSA_HASH_REVOKE_ADDR, &otp_write,
+				  OTP_RSA_HASH_REVOKE_SIZE)) {
+		printf("RSA: Write revoke key config fail.\n");
+		ret = -EIO;
+		goto error;
+	} else {
+		printf("RSA: Write revoke key config successfully.\n");
+	}
+#else
+	/* Burn secure flag here */
+	otp_write = OTP_SECURE_BOOT_ENABLE_VALUE;
+	if (misc_otp_write_verify(dev, OTP_SECURE_BOOT_ENABLE_ADDR, &otp_write,
+				  OTP_SECURE_BOOT_ENABLE_SIZE)) {
+		printf("RSA: Write secure flag fail.\n");
+		ret = -EIO;
+		goto error;
+	} else {
+		printf("RSA: Write secure flag successfully.\n");
+	}
+#endif
 
 error:
 	free(rsa_key);
 
 	return ret;
 }
+
+#if defined(CONFIG_SPL_OTP_DISABLE_SD) || defined(CONFIG_SPL_OTP_DISABLE_USB) || \
+    defined(CONFIG_SPL_OTP_DISABLE_UART) || defined(CONFIG_SPL_OTP_DISABLE_SPI2APB)
+typedef struct {
+	unsigned long addr;
+	uint8_t value;
+	char *name;
+} OtpUpgrade;
+
+int rsa_burn_disable_upgrade(void)
+{
+	OtpUpgrade upgrade[] = {
+#if defined(CONFIG_SPL_OTP_DISABLE_USB)
+		{OTP_DISABLE_UPGRADE_ADDR, OTP_DISABLE_USB_VAL, "usb"},
+#endif
+#if defined(CONFIG_SPL_OTP_DISABLE_SD)
+		{OTP_DISABLE_UPGRADE_ADDR, OTP_DISABLE_SD_VAL, "sd"},
+#endif
+#if defined(CONFIG_SPL_OTP_DISABLE_UART)
+		{OTP_DISABLE_UPGRADE_ADDR, OTP_DISABLE_UART_VAL, "uart"},
+#endif
+#if defined(CONFIG_SPL_OTP_DISABLE_SPI2APB)
+		{OTP_DISABLE_UPGRADE_ADDR, OTP_DISABLE_SPI2APB_VAL, "spi2apb"},
+#endif
+	};
+	struct udevice *dev;
+	uint8_t otp_write;
+	int ret = 0, i;
+
+	dev = misc_otp_get_device(OTP_S);
+	if (!dev) {
+		printf("OTP: No available device\n");
+		ret = -ENODEV;
+		goto fail;
+	}
+
+	for (i = 0; i < sizeof(upgrade)/sizeof(upgrade[0]); i++) {
+		otp_write = upgrade[i].value;
+		if (misc_otp_write_verify(dev, upgrade[i].addr, &otp_write, 1)) {
+			printf("Write OTP to disable %s upgrade failed.\n", upgrade[i].name);
+			goto fail;
+		}
+		printf("Write OTP to disable %s upgrade successfully.\n", upgrade[i].name);
+	}
+
+fail:
+	return ret;
+}
+#endif
 #endif
 #endif

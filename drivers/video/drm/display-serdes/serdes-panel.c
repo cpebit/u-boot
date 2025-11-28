@@ -25,6 +25,8 @@ static void serdes_panel_init(struct serdes *serdes)
 	if (serdes->chip_data->serdes_type == TYPE_DES)
 		serdes_i2c_set_sequence(serdes);
 
+	serdes_pinctrl_register(serdes->dev);
+
 	SERDES_DBG_MFD("%s: %s %s\n", __func__, serdes->dev->name,
 		       serdes->chip_data->name);
 }
@@ -58,10 +60,10 @@ static void serdes_panel_enable(struct rockchip_panel *panel)
 	struct udevice *dev = panel->dev;
 	struct serdes *serdes = dev_get_priv(dev->parent);
 
+	serdes_panel_init(serdes);
+
 	if (serdes->chip_data->panel_ops->enable)
 		serdes->chip_data->panel_ops->enable(serdes);
-
-	serdes_panel_init(serdes);
 
 	if (serdes->serdes_panel->backlight)
 		backlight_enable(serdes->serdes_panel->backlight);
@@ -101,7 +103,8 @@ static struct rockchip_panel_funcs serdes_panel_ops = {
 static int serdes_panel_probe(struct udevice *dev)
 {
 	struct serdes *serdes = dev_get_priv(dev->parent);
-	struct serdes_panel *serdes_panel = NULL;
+	struct serdes_panel *serdes_panel;
+	u32 link_rate_count_ssc[3] = {0};
 	struct rockchip_panel *panel;
 	int ret;
 
@@ -133,9 +136,17 @@ static int serdes_panel_probe(struct udevice *dev)
 	if (!panel)
 		return -ENOMEM;
 
-	ret = serdes_get_init_seq(serdes);
-	if (ret)
-		goto free_panel;
+	ret = dev_read_u32_array(dev, "rate-count-ssc", link_rate_count_ssc,
+				 ARRAY_SIZE(link_rate_count_ssc));
+	if (!ret) {
+		serdes_panel->link_rate = link_rate_count_ssc[0];
+		serdes_panel->lane_count = link_rate_count_ssc[1];
+		serdes_panel->ssc = link_rate_count_ssc[2];
+
+		SERDES_DBG_MFD("serdes panel rate=%d, cnt=%d, ssc=%d\n",
+			       serdes_panel->link_rate,
+			       serdes_panel->lane_count, serdes_panel->ssc);
+	}
 
 	dev->driver_data = (ulong)panel;
 	panel->dev = dev;
@@ -150,11 +161,6 @@ static int serdes_panel_probe(struct udevice *dev)
 	       SERDES_UBOOT_DISPLAY_VERSION);
 
 	return 0;
-
-free_panel:
-	free(panel);
-
-	return ret;
 }
 
 static const struct udevice_id serdes_of_match[] = {

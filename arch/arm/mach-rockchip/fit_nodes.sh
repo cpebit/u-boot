@@ -9,8 +9,19 @@
 source ./${srctree}/arch/arm/mach-rockchip/fit_args.sh
 rm -f ${srctree}/*.digest ${srctree}/*.bin.gz ${srctree}/bl31_0x*.bin
 
-# Periph register
+# Periph register base
+if grep -q '^CONFIG_ROCKCHIP_RK3576=y' .config ; then
+MAX_ADDR_VAL=$((0x10000000))
+elif grep -q '^CONFIG_ROCKCHIP_RV1126B=y' .config ; then
+MAX_ADDR_VAL=$((0x20000000))
+elif grep -q '^CONFIG_ROCKCHIP_RV1103B=y' .config ; then
+MAX_ADDR_VAL=$((0x20000000))
+else
 MAX_ADDR_VAL=$((0xf0000000))
+fi
+
+# dram base
+DRAM_BASE_VAL=`sed -n "/CONFIG_SYS_SDRAM_BASE=/s/CONFIG_SYS_SDRAM_BASE=//p" ${srctree}/include/autoconf.mk|tr -d '\r'`
 
 # compression
 if [ "${COMPRESSION}" == "gzip" ]; then
@@ -235,15 +246,19 @@ function gen_mcu_node()
 			arch = \"riscv\";
 			load = <"${MCU_ADDR}">;"
 
-		if [ "${COMPRESSION}" != "none" -a ${MCU_ADDR_VAL} -lt ${MAX_ADDR_VAL} ]; then
-			openssl dgst -sha256 -binary -out ${MCU}.bin.digest ${MCU}.bin
-			${COMPRESS_CMD} ${MCU}.bin
-			echo "			data = /incbin/(\"./${MCU}.bin${SUFFIX}\");
-			compression = \"${COMPRESSION}\";
-			digest {
-				value = /incbin/(\"./${MCU}.bin.digest\");
-				algo = \"sha256\";
-			};"
+		# When allow to be compressed?
+		# DRAM base < load addr < Periph register base
+		# Periph register base < DRAM base < load addr
+		if [ "${COMPRESSION}" != "none" -a "$((MCU_ADDR_VAL))" -gt "$((DRAM_BASE_VAL))" ] &&
+		   [ "$((DRAM_BASE_VAL))" -gt "$((MAX_ADDR_VAL))" -o "$((MCU_ADDR_VAL))" -lt "$((MAX_ADDR_VAL))" ]; then
+				openssl dgst -sha256 -binary -out ${MCU}.bin.digest ${MCU}.bin
+				${COMPRESS_CMD} ${MCU}.bin
+				echo "			data = /incbin/(\"./${MCU}.bin${SUFFIX}\");
+				compression = \"${COMPRESSION}\";
+				digest {
+					value = /incbin/(\"./${MCU}.bin.digest\");
+					algo = \"sha256\";
+				};"
 		else
 			echo "			data = /incbin/(\"./${MCU}.bin\");
 			compression = \"none\";"
@@ -264,6 +279,24 @@ function gen_mcu_node()
 		STANDALONE_SIGN=", \"standalone\""
 		STANDALONE_MCU="standalone = ${STANDALONE_LIST};"
 	done
+
+	if [ -z ${INIT0_LOAD_ADDR} ]; then
+		return
+	fi
+
+	INIT="init0"
+	echo "		${INIT} {
+			description = \"${INIT}\";
+			type = \"standalone\";
+			arch = \"${ARCH}\";
+			load = <"${INIT0_LOAD_ADDR}">;
+			data = /incbin/(\"./${INIT}.bin\");
+			compression = \"none\";
+			hash {
+				algo = \"sha256\";
+			};
+		};"
+	STANDALONE_MCU="standalone = \"init0\"${STANDALONE_LIST};"
 }
 
 function gen_loadable_node()
@@ -294,15 +327,19 @@ function gen_loadable_node()
 			arch = \"${ARCH}\";
 			load = <"${LOAD_ADDR}">;"
 
-		if [ "${COMPRESSION}" != "none" -a ${LOAD_ADDR_VAL} -lt ${MAX_ADDR_VAL} ]; then
-			openssl dgst -sha256 -binary -out ${LOAD}.bin.digest ${LOAD}.bin
-			${COMPRESS_CMD} ${LOAD}.bin
-			echo "			data = /incbin/(\"./${LOAD}.bin${SUFFIX}\");
-			compression = \"${COMPRESSION}\";
-			digest {
-				value = /incbin/(\"./${LOAD}.bin.digest\");
-				algo = \"sha256\";
-			};"
+		# When allow to be compressed?
+		# DRAM base < load addr < Periph register base
+		# Periph register base < DRAM base < load addr
+		if [ "${COMPRESSION}" != "none" -a "$((MCU_ADDR_VAL))" -gt "$((DRAM_BASE_VAL))" ] &&
+		   [ "$((DRAM_BASE_VAL))" -gt "$((MAX_ADDR_VAL))" -o "$((MCU_ADDR_VAL))" -lt "$((MAX_ADDR_VAL))" ]; then
+				openssl dgst -sha256 -binary -out ${LOAD}.bin.digest ${LOAD}.bin
+				${COMPRESS_CMD} ${LOAD}.bin
+				echo "			data = /incbin/(\"./${LOAD}.bin${SUFFIX}\");
+				compression = \"${COMPRESSION}\";
+				digest {
+					value = /incbin/(\"./${LOAD}.bin.digest\");
+					algo = \"sha256\";
+				};"
 		else
 			echo "			data = /incbin/(\"./${LOAD}.bin\");
 			compression = \"none\";"
