@@ -24,8 +24,7 @@
     "fdt_addr_r=0x00c00000\0" \
     "kernel_addr_c=0x00808000\0" \
     "kernel_addr_r=0x00008000\0" \
-    "ramdisk_addr_r=0x000e00000\0" \
-    "loadaddr=0x00e00800\0"
+    "ramdisk_addr_r=0x000e00000\0"
 
 #undef CONFIG_EXTRA_ENV_SETTINGS
 #define CONFIG_EXTRA_ENV_SETTINGS \
@@ -75,9 +74,7 @@
     "fi; " \
     "echo Booting from boot${bootpart}; " \
     "setenv bootargs \"${bootargs} ubi.mtd=root ubi.block=0,rootfs${bootpart} root=/dev/ubiblock0_rootfs${bootpart} rootfstype=squashfs systemd.machine_id=${cpuid#}\"; " \
-    "ubi part root; " \
-    "ubi read ${loadaddr} boot${bootpart}; " \
-    "bootm ${loadaddr};"
+    "boot_fit;"
 #endif
 
 #endif /* !CONFIG_SPL_BUILD */
