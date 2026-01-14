@@ -143,12 +143,18 @@ static void *fit_get_blob(struct blk_desc *dev_desc,
 {
 	__maybe_unused int conf_noffset;
 	disk_partition_t part;
-	char part_name[10] = PART_BOOT;
 	void *fit, *fdt;
 	int blk_num;
 
-    char *bootpart = env_get("bootpart");
-    strcat(part_name, bootpart);
+	unsigned long bootpart = env_get_ulong("bootpart", 10, 0);
+
+	if (bootpart < 1 || bootpart > 9) {
+		FIT_I("Invalid bootpart: %lu\n", bootpart);
+		return NULL;
+	}
+
+	char part_name[6];
+	snprintf(part_name, sizeof(part_name), "%s%lu", PART_BOOT, bootpart);
 
 	if (part_get_info_by_name(dev_desc, part_name, &part) < 0) {
 		FIT_I("No %s partition\n", part_name);
