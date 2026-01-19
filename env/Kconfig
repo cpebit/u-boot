@@ -523,7 +523,6 @@ config ENV_SIZE
 	help
 	  Size of the environment storage area
 
-if ENVF
 config ENV_OFFSET_REDUND
 	hex "Environment redundant(backup) offset"
 	default ENV_OFFSET
@@ -531,6 +530,7 @@ config ENV_OFFSET_REDUND
 	  Redundant(backup) offset from the start of the device (or partition),
 	  this size must be ENV_SIZE.
 
+if ENVF
 if CMD_NAND || MTD_SPI_NAND
 config ENV_NAND_OFFSET
 	hex "Environment offset in Nand"
