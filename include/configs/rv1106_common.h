@@ -116,4 +116,6 @@
 #endif
 #endif	/* !CONFIG_SPL_BUILD */
 
+#define CONFIG_SYS_MAX_NAND_DEVICE 1
+
 #endif
