@@ -133,7 +133,7 @@ static int env_read(struct blk_desc *desc, u32 offset, u32 size, env_t **envp)
 	}
 
 	if (crc32(0, env->data, data_size) != env->crc) {
-		ENVF_MSG("!bad CRC @ 0x%x\n", offset);
+		ENVF_MSG("Bad CRC @ 0x%x\n", offset);
 		ret = -EINVAL;
 		goto fail;
 	}
@@ -150,9 +150,6 @@ fail:
 
 static __maybe_unused env_t *envf_read(struct blk_desc *desc)
 {
-	env_t *env = NULL;
-	int ret;
-
 	if (!desc)
 		return NULL;
 
@@ -166,9 +163,25 @@ static __maybe_unused env_t *envf_read(struct blk_desc *desc)
 		env_size = SZ_16K;
 	}
 #endif
-	ret = env_read(desc, env_offset, env_size, &env);
-	if (ret < 0 && env_offset_redund)
-		ret = env_read(desc, env_offset_redund, env_size, &env);
+
+	env_t *env = NULL;
+
+	if (env_read(desc, env_offset, env_size, &env) < 0 && env_offset_redund) {
+		if (env_read(desc, env_offset_redund, env_size, &env) < 0) {
+			ENVF_MSG("Could not read redundant env\n");
+			return NULL;
+		}
+
+#ifndef CONFIG_SPL_BUILD
+		ENVF_MSG("Env corrupt, restoring from redundant env\n");
+
+		u32 blk_cnt = BLK_CNT(desc, env_size);
+		if (blk_dwrite(desc, BLK_CNT(desc, env_offset), blk_cnt, (char *)env) != blk_cnt) {
+			ENVF_MSG("Could not write env\n");
+			return NULL;
+		}
+#endif
+	}
 
 	return env;
 }
