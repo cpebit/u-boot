@@ -57,7 +57,7 @@
 
 		led-blue {
 			label = "rgb-blue";
-			gpios = <&gpio1 RK_PB1 GPIO_ACTIVE_HIGH>;
+			gpios = <&gpio1 RK_PA7 GPIO_ACTIVE_HIGH>;
 			linux,default-trigger = "none";
 			default-state = "off";
 			u-boot,dm-spl;
@@ -102,7 +102,7 @@
 		};
 
 		led_blue_pin: led-blue-pin {
-			rockchip,pins = <1 RK_PB1 RK_FUNC_GPIO &pcfg_pull_none>;
+			rockchip,pins = <1 RK_PA7 RK_FUNC_GPIO &pcfg_pull_none>;
 			u-boot,dm-spl;
 		};
 	};

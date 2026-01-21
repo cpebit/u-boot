@@ -18,6 +18,6 @@
 	};
 
 	led-blue {
-		gpios = <&gpio1 RK_PB1 GPIO_ACTIVE_LOW>;
+		gpios = <&gpio1 RK_PA7 GPIO_ACTIVE_LOW>;
 	};
 };
