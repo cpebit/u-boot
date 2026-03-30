@@ -299,7 +299,16 @@ void rockchip_set_bootdev(struct blk_desc *desc)
 __weak int rockchip_dnl_key_pressed(void)
 {
 #if defined(CONFIG_DM_KEY)
-	return key_is_pressed(key_read(KEY_F15));
+	if (!key_is_pressed(key_read(KEY_F15)))
+		return 0;
+
+	ulong start = get_timer(0);
+
+	while (key_is_pressed(key_read(KEY_F15))) {
+		if (get_timer(start) >= 2000)
+			return 1;
+		mdelay(10);
+	}
 
 #elif defined(CONFIG_ADC)
 	const void *blob = gd->fdt_blob;
